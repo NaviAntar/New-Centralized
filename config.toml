@@ -1,0 +1,26 @@
+# Tema bawaan Streamlit.
+#
+# Warna di sini harus SAMA dengan token di theme.py. Streamlit memakai
+# primaryColor untuk hal-hal yang tidak bisa disentuh CSS kita dengan rapi —
+# chip multiselect, kursor teks, slider, spinner. Sebelum ini primaryColor
+# masih merah bawaan, jadi chip filter terbaca seperti peringatan padahal cuma
+# pilihan biasa.
+#
+# Kalau BRAND di theme.py diubah, ubah juga di sini.
+
+[theme]
+primaryColor = "#FF6805"           # theme.BRAND["orange"]
+backgroundColor = "#F1F3F7"        # theme.NEUTRAL["bg"]
+secondaryBackgroundColor = "#FFFFFF"   # theme.NEUTRAL["card"]
+textColor = "#111827"              # theme.NEUTRAL["text"]
+font = "sans serif"
+baseRadius = "0.6rem"
+borderColor = "#E3E7EF"            # theme.NEUTRAL["border"]
+showWidgetBorder = true
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = true
+
+[server]
+enableStaticServing = false

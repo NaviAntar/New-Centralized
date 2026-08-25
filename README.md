@@ -186,22 +186,20 @@ function doGet(e) {
 }
 ```
 
-### 2. Form per site
+### 2. Form dan spreadsheet per site
 
-`config.FORM_URLS` menyimpan satu URL per site. Yang sudah terisi baru **HO**
-(rekrutmen Staff). Site tambang memakai form Non Staff terpisah — selama URL-nya
-kosong, Recruitment Room menyatakan formnya belum ada, bukan mengarahkan orang
-ke form yang salah.
-
-Menambahkan form baru cukup satu baris:
+`config.FORM_URLS` dan `config.SHEET_URLS` menyimpan satu URL per site. HO
+memakai form baru (Staff); BCP, KCP, dan ACP sementara memakai form Centralized
+yang sudah berjalan selama ini. Mengganti form sebuah site cukup satu baris:
 
 ```python
 FORM_URLS = {
-    "HO": "https://script.google.com/macros/s/AKfycby.../exec",
-    "BCP": "https://script.google.com/macros/s/PASTE_DI_SINI/exec",
-    ...
+    "HO":  "https://script.google.com/macros/s/AKfycby.../exec",
+    "BCP": "https://script.google.com/macros/s/PASTE_URL_BARU/exec",
 }
 ```
+
+SSCP belum punya keduanya, jadi halamannya menyatakan itu apa adanya.
 
 ### 3. Inisial recruiter yang belum dipetakan
 
@@ -234,11 +232,11 @@ hal itu dinyatakan terbuka di layar.
 
 | Halaman | Status |
 |---|---|
-| Overview | Selesai — KPI, funnel, tren, SLA per tahap, sumber CV, kegagalan per tahap, **embed Looker** |
-| Weekly Report | Selesai — Performance recruiter, New Hire, On Progress, Summary per site |
-| Tracking Kandidat | Selesai — filter, tabel tahap, progress bar, waktu menganggur |
-| Recruitment Room | Selesai — pilih site, salin link, form tersemat |
-| Tracking Posisi | Belum — menyusul |
+| Overview | Ringkasan (5 kartu) + embed Looker — dua bagian saja |
+| Weekly Report | Performance recruiter, New Hire, ringkasan site, On Progress, karyawan resign |
+| Tracking Kandidat | Satu kotak cari + daftar kandidat, tabel tahap, progress bar |
+| Tracking Posisi | Cari posisi langsung, site tertera di tiap baris, kandidat per posisi |
+| Recruitment Room | Pilih site → link form & spreadsheet → form tersemat |
 
 Halaman yang belum dibangun tetap bisa dibuka dan menampilkan daftar isi yang
 akan masuk ke sana, supaya tidak ada tombol yang mati tanpa penjelasan.
@@ -249,12 +247,29 @@ akan masuk ke sana, supaya tidak ada tombol yang mati tanpa penjelasan.
 halaman ini hanya berlaku untuk kartu dan chart portal — Looker punya filternya
 sendiri dan menghitung terpisah.
 
-**Weekly Report.** Tabel Performance memakai definisi yang Navi tentukan: SLA
-Actual adalah rata-rata, per kandidat, dari jumlah durasi tahap yang orang itu
-pegang — bukan lead time PRF-sampai-akhir. SLA Budget memakai tahap yang sama,
-dengan budget level kandidat masing-masing, sehingga keduanya selalu
-membandingkan komposisi yang identik. Filter bulan/tahun merujuk ke tanggal
-**screening CV** kandidat, jadi satu kandidat selalu utuh dalam satu periode.
+**Weekly Report.** Tabel Performance dihitung dua langkah: tiap tahap yang
+seseorang pegang dirata-ratakan dulu (Screening rata-rata 1 hari, Interview HR
+rata-rata 2 hari, dan seterusnya), lalu rata-rata antar tahap itu dijumlahkan.
+SLA Budget mengikuti tahap yang sama, jadi keduanya selalu sebanding. Expander
+*Rincian per tahap* memperlihatkan asal tiap angkanya.
+
+Filter bulan/tahun bisa memilih lebih dari satu. Memilih dua bulan membuat
+New Hire dan Ringkasan per site menampilkan satu kolom untuk tiap bulan plus
+kolom Total. Periodenya merujuk ke tanggal **screening CV** untuk Performance,
+dan tanggal **onboarding** untuk New Hire dan Ringkasan per site.
+
+**On Progress dan Karyawan resign** mereplikasi rumus QUERY yang sudah dipakai
+tim di sheet ONP dan Karyawan Resign, bukan tafsiran sendiri:
+
+| Panel | Aturan |
+|---|---|
+| Offering | status OPEN, tahap Offering, START REQ OFFERING di bulan berjalan |
+| MCU | status OPEN, tahap MCU/Review MCU/FU MCU, OL SENT di bulan berjalan |
+| Onboarding | hasil MCU FIT TO WORK dan tanggal onboarding masih di depan |
+| Resign | dari sheet `Update MPP`: level < 11, posisi bukan Internship, berhenti di bulan berjalan, dan berhenti sebelum kontrak habis atau tidak punya tanggal akhir kontrak |
+
+Panel resign diverifikasi terhadap sheet: **18 dari 18 nama cocok persis** untuk
+Agustus 2026.
 
 Kolom **Onboarding** tidak bisa dijumlahkan ke bawah: satu kandidat ditangani
 beberapa PIC dan masing-masing mendapat kreditnya (keputusan Navi), jadi
@@ -266,7 +281,13 @@ Sheet **Summary** belum punya kolom Need. Angka kebutuhan berasal dari weekly
 report dan portal belum menyambungnya; menampilkan kolom kosong bernama Need
 akan lebih menyesatkan daripada tidak menampilkannya.
 
-**Tracking Kandidat.** Kandidat dipilih dengan kunci gabungan nama + Position ID.
-Kalau nama yang dipilih kembar, muncul peringatan yang menyebut Position ID mana
-yang sedang ditampilkan. Progress bar dihitung terhadap tahap yang berlaku untuk
-level itu, jadi kandidat yang sudah onboarding benar-benar mencapai 100%.
+**Tracking Kandidat.** Kotak cari hanya menyaring; daftar di bawahnya yang
+memilih. Tiap barisnya bertuliskan *nama · posisi · site* — memakai nama posisi,
+bukan Position ID, karena kode seperti `R22R030012` tidak berarti apa-apa saat
+dibaca sekilas. Progress bar dihitung terhadap tahap yang berlaku untuk level
+itu, jadi kandidat yang sudah onboarding benar-benar mencapai 100%.
+
+**Tracking Posisi.** Mengetik kata kunci langsung memunculkan posisi yang cocok,
+dengan site tertera sebagai chip berwarna di tiap baris — tidak perlu memilih
+site lebih dulu. Jadi mengetik "supervisor" langsung memperlihatkan semua
+Supervisor di semua site sekaligus dan bisa dibandingkan.

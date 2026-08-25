@@ -135,3 +135,19 @@ def load_report_sheet(sheet_name: str) -> pd.DataFrame:
         ("export by gid", C.gsheet_gid_url(C.REPORT_GID_DEFAULT, C.REPORT_SPREADSHEET_ID)),
     ], header=None)
     return df
+
+
+def load_mpp(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
+    """Sheet 'Update MPP' dari spreadsheet Report — daftar karyawan aktif & resign.
+
+    Dipakai panel "Karyawan resign" di Weekly Report, mengikuti rumus yang sudah
+    dipakai tim di sheet "Karyawan Resign".
+    """
+    if isinstance(source, pd.DataFrame):
+        return source.copy()
+    df, _ = _try_sources([
+        ("argumen langsung", source or ""),
+        ("env MPP_CSV", os.environ.get("MPP_CSV", "")),
+        ("gviz by nama tab", C.gsheet_csv_url(C.REPORT_SHEET_MPP, C.REPORT_SPREADSHEET_ID)),
+    ])
+    return df

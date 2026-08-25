@@ -36,6 +36,7 @@ REPORT_GID_DEFAULT = "1072355758"
 REPORT_SHEET_SUMMARY = "Summary"
 REPORT_SHEET_NEWHIRE = "New Hire"
 REPORT_SHEET_ONP = "ONP"
+REPORT_SHEET_MPP = "Update MPP"      # daftar karyawan — sumber panel resign
 
 CACHE_TTL_SECONDS = 60
 
@@ -132,29 +133,45 @@ SITES = {
 
 # Tiap site punya deployment Apps Script sendiri.
 #
-# Form yang sudah ada melayani rekrutmen di HO, yang levelnya Staff. Site tambang
-# memakai form terpisah untuk Non Staff — Navi sedang membuatnya. Selama URL-nya
-# masih kosong, Recruitment Room menampilkan keadaan itu apa adanya, bukan
-# mengarahkan orang ke form yang salah.
+# HO memakai form baru (Staff). Empat site lain sementara memakai form Centralized
+# yang sudah berjalan selama ini — bukan dikosongkan, supaya tim tetap punya
+# tempat input sambil menunggu form Non Staff per site selesai dibuat.
 #
-# Menambahkan form baru: tempel URL deployment-nya di baris site yang sesuai.
+# Mengganti form sebuah site: tempel URL deployment barunya di baris yang sesuai.
 # Tidak ada tempat lain yang perlu diubah.
 FORM_URLS = {
     "HO": ("https://script.google.com/macros/s/"
            "AKfycbyOxlEMzjJQ1cwICJFdCbaTiP-5N_UsQiP4gwqRRPBhiGcZCA3dKJItqh5nW07PwIGU/exec"),
-    "BCP": "",
-    "KCP": "",
-    "ACP": "",
+    "BCP": ("https://script.google.com/macros/s/"
+            "AKfycbwYNMV7x1qjFr6CcVE2QF30iqeg-RjJb2uUIkD8oh69fmN5ZEvkyrnU41Td-sMp4ZqTyQ/exec"),
+    "KCP": ("https://script.google.com/macros/s/"
+            "AKfycbx2-5kNGHHj-qqAKmV0kHbXiN1VQ0KUu9Gw5nqXnYTXuRho3BSeWrgWodNWzVne4mC7MA/exec"),
+    "ACP": ("https://script.google.com/macros/s/"
+            "AKfycbwyF4rVWA016TGZgKm2GE3NLjLqPFsdpm8tVISeKLbjrL0qZdFXXRiowwpjfeeW6sC6UA/exec"),
     "SSCP": "",
 }
 
-# Keterangan singkat tiap form, tampil di bawah judul kartu.
+# Spreadsheet tempat tiap form menulis. Dipakai Recruitment Room supaya orang
+# bisa langsung membuka sheet-nya tanpa mencari-cari link.
+SHEET_URLS = {
+    "HO": ("https://docs.google.com/spreadsheets/d/"
+           "1WxPctId12ETTmELrkC6NGUJxKMW45R8llENqTtRt1hU/edit?gid=593032148"),
+    "BCP": ("https://docs.google.com/spreadsheets/d/"
+            "1Zqcs7d497_8kvoCDcFMSSRrfdxw5XBgD3pshIQhZWhg/edit?gid=29237685"),
+    "KCP": ("https://docs.google.com/spreadsheets/d/"
+            "1TZ91xddvt5718knaxDqAIlFadGSUvFjd67KDAx33VKA/edit?gid=0"),
+    "ACP": ("https://docs.google.com/spreadsheets/d/"
+            "1ijLgBLvNJVG4VrSBwEaWLw7GfyYb7ck3tmuctE3I8Oo/edit?gid=0"),
+    "SSCP": "",
+}
+
+# Keterangan singkat tiap site, tampil di bawah judul kartu.
 FORM_NOTES = {
-    "HO": "Staff · rekrutmen HO",
-    "BCP": "Non Staff · menyusul",
-    "KCP": "Non Staff · menyusul",
-    "ACP": "Non Staff · menyusul",
-    "SSCP": "Non Staff · menyusul",
+    "HO": "Form baru · Staff",
+    "BCP": "Form Centralized · Non Staff menyusul",
+    "KCP": "Form Centralized · Non Staff menyusul",
+    "ACP": "Form Centralized · Non Staff menyusul",
+    "SSCP": "Belum aktif",
 }
 
 # CATATAN — form Apps Script tidak akan tampil di dalam iframe sampai doGet()
@@ -172,6 +189,11 @@ LOOKER_EMBED_HEIGHT = 700
 def form_url_for(site_key: str) -> str:
     """URL form site tersebut. String kosong berarti formnya belum ada."""
     return FORM_URLS.get(site_key, "")
+
+
+def sheet_url_for(site_key: str) -> str:
+    """URL spreadsheet tujuan form site tersebut."""
+    return SHEET_URLS.get(site_key, "")
 
 
 # ===========================================================================

@@ -1777,6 +1777,93 @@ STAGE_CSS = f"""
   .dh-barrow {{ grid-template-columns:110px 1fr 64px; }}
   .dh-barrow .note {{ display:none; }}
 }}
+
+.dh-linklabel {{
+  font-size:10.5px; font-weight:800; letter-spacing:.09em; text-transform:uppercase;
+  color:{NEUTRAL["text_soft"]}; margin:10px 0 -6px;
+}}
+
+/* ── Kontrol input ──────────────────────────────────────────────────────────
+   Streamlit memberi selectbox dan text input latar yang nyaris sama dengan
+   latar halaman, jadi kotaknya tidak terlihat sebagai sesuatu yang bisa
+   diklik. Semua kontrol dipaksa putih dengan border tegas dan ring oranye
+   saat fokus, supaya baris filter terbaca sebagai baris filter. */
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] div[data-baseweb="select"] > div,
+[data-testid="stTextInput"] input,
+[data-testid="stDateInput"] input {{
+  background: {NEUTRAL["card"]} !important;
+  border: 1px solid {NEUTRAL["border"]} !important;
+  border-radius: 9px !important;
+  box-shadow: 0 1px 2px rgba(17,24,39,.05) !important;
+  color: {NEUTRAL["text"]} !important;
+  font-size: 13px !important;
+  min-height: 40px;
+}}
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:hover,
+[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:hover,
+[data-testid="stTextInput"] input:hover {{
+  border-color: {BRAND["orange"]} !important;
+}}
+[data-testid="stSelectbox"] div[data-baseweb="select"] > div:focus-within,
+[data-testid="stMultiSelect"] div[data-baseweb="select"] > div:focus-within,
+[data-testid="stTextInput"] input:focus {{
+  border-color: {BRAND["orange"]} !important;
+  box-shadow: 0 0 0 3px {tint(BRAND["orange"], .82)} !important;
+  outline: none !important;
+}}
+[data-testid="stTextInput"] input::placeholder {{ color: {NEUTRAL["text_soft"]} !important; }}
+
+/* label filter — kecil, huruf besar, jelas miliknya kontrol di bawahnya */
+[data-testid="stWidgetLabel"] label p {{
+  font-size: 10.5px !important; font-weight: 800 !important;
+  letter-spacing: .09em !important; text-transform: uppercase !important;
+  color: {NEUTRAL["text_soft"]} !important;
+}}
+
+/* Chip pilihan pada multiselect. Streamlit memberinya merah bawaan, yang di
+   layar ini terbaca sebagai peringatan padahal cuma pilihan filter. Selectornya
+   sengaja luas karena struktur DOM-nya berbeda antar versi Streamlit. */
+[data-testid="stMultiSelect"] [data-baseweb="tag"],
+[data-testid="stMultiSelect"] [role="button"][aria-label*="remove" i],
+[data-testid="stMultiSelect"] div[data-baseweb="select"] span[role="button"] {{
+  background: {tint(BRAND["orange"], .86)} !important;
+  background-color: {tint(BRAND["orange"], .86)} !important;
+  color: {BRAND["orange_deep"]} !important;
+  border-radius: 7px !important; font-weight: 700 !important;
+}}
+[data-testid="stMultiSelect"] [data-baseweb="tag"] span,
+[data-testid="stMultiSelect"] [data-baseweb="tag"] div {{
+  color: {BRAND["orange_deep"]} !important;
+}}
+[data-testid="stMultiSelect"] [data-baseweb="tag"] svg,
+[data-testid="stMultiSelect"] [data-baseweb="tag"] path {{
+  fill: {BRAND["orange_deep"]} !important; stroke: {BRAND["orange_deep"]} !important;
+}}
+
+/* Baris filter dibungkus jadi satu panel putih supaya terbaca sebagai satu
+   kelompok, bukan kontrol yang melayang di atas latar abu. */
+div[class*="st-key-filterbar"] {{
+  background: {NEUTRAL["card"]};
+  border: 1px solid {NEUTRAL["border"]};
+  border-radius: 12px;
+  padding: 12px 16px 4px;
+  margin-bottom: 14px;
+  box-shadow: 0 1px 2px rgba(17,24,39,.05);
+}}
+
+/* expander */
+[data-testid="stExpander"] details {{
+  background: {NEUTRAL["card"]} !important;
+  border: 1px solid {NEUTRAL["border"]} !important;
+  border-radius: 12px !important;
+}}
+[data-testid="stExpander"] summary {{ font-weight: 700 !important; font-size: 13px !important; }}
+
+/* tabel dataframe bawaan Streamlit ikut senada */
+[data-testid="stDataFrame"] {{
+  border: 1px solid {NEUTRAL["border"]} !important; border-radius: 10px !important;
+}}
 </style>
 """
 
