@@ -133,6 +133,24 @@ STAGE_ORDER = [
     "Onboarding",
 ]
 
+# Tahap yang dilalui SEMUA kandidat. Technical Test (hanya Non Staff) dan
+# Psychotest (sering dilewat) sengaja tidak masuk: keduanya cabang opsional,
+# dan memasukkannya ke funnel membuat angka tahap sesudahnya terbaca seolah
+# lebih banyak orang mengerjakannya daripada kenyataan.
+MAIN_FUNNEL = [
+    "Screening CV",
+    "Interview HR",
+    "Interview User",
+    "Offering",
+    "MCU",
+    "Review MCU",
+    "FU MCU",
+    "One Month Notice",
+    "Onboarding",
+]
+
+OPTIONAL_STAGES = ["Technical Test", "Psychotest"]
+
 
 # ---------------------------------------------------------------------------
 # Shade generator — gradasi natural dari satu warna dasar
@@ -822,6 +840,9 @@ def inject_css():
             line-height: 1.4;
         }}
         .dh-inline-note b {{ color: {NEUTRAL['text']}; font-weight: 800; }}
+        /* Varian paragraf: display flex bawaan membuat tiap <b> jadi kolom
+           tersendiri, jadi catatan panjang harus block. */
+        .dh-inline-note.block {{ display: block; }}
         .dh-inline-note.warn {{
             border-left-color: {STATUS['warn']};
             background: {tint(STATUS['warn'], .93)};
@@ -1436,8 +1457,18 @@ def empty_state(title: str, body: str, emoji: str = "📊") -> str:
     )
 
 
-def inline_note(html: str, warn: bool = False) -> str:
-    cls = "dh-inline-note warn" if warn else "dh-inline-note"
+def inline_note(html: str, warn: bool = False, block: bool = False) -> str:
+    """Catatan kecil di bawah kartu.
+
+    Bentuk bawaannya flex — cocok untuk satu baris pendek. Untuk catatan
+    beberapa kalimat pakai `block=True`: tanpa itu setiap <b> menjadi kolom
+    flex-nya sendiri dan kalimatnya terpotong-potong menyamping.
+    """
+    cls = "dh-inline-note"
+    if warn:
+        cls += " warn"
+    if block:
+        cls += " block"
     return f'<div class="{cls}">{html}</div>'
 
 
@@ -1658,9 +1689,10 @@ def stage_table(stages: list[dict]) -> str:
                  "active": BRAND["orange"], "idle": NEUTRAL["text_soft"],
                  "na": NEUTRAL["text_soft"]}
 
+    cols = ("", "Tahap", "Status", "Mulai → Selesai", "LT / Budget", "SLA")
     head = "".join(
-        f"<th>{h}</th>" for h in
-        ("", "Tahap", "Status", "Mulai → Selesai", "LT / Budget", "SLA")
+        f'<th class="dh-num">{h}</th>' if h == "LT / Budget" else f"<th>{h}</th>"
+        for h in cols
     )
     body = []
     for i, s in enumerate(stages):
@@ -1717,6 +1749,17 @@ STAGE_CSS = f"""
 .dh-prog .pct {{ text-align:right; font-family:{FONT_DISPLAY}; font-size:12px;
   font-weight:800; margin-top:5px; font-variant-numeric:tabular-nums; }}
 
+.dh-table.dh-portal td.dh-l, .dh-table.dh-portal th.dh-l {{ text-align:left; }}
+.dh-table.dh-portal td.dh-r, .dh-table.dh-portal th.dh-r {{ text-align:right; }}
+.dh-table.dh-portal td:first-child {{ font-weight:600; }}
+.dh-tablewrap {{ overflow-x:auto; }}
+
+/* Tabel tahap: kolom keterangan rata kiri, kolom angka rata kanan. Tanpa ini
+   nama tahap ikut rata kanan karena aturan warisan .dh-table. */
+.dh-table.dh-stage td, .dh-table.dh-stage th {{ text-align:left; }}
+.dh-table.dh-stage td.dh-num, .dh-table.dh-stage th.dh-num {{ text-align:right; }}
+.dh-table.dh-stage td:first-child, .dh-table.dh-stage th:first-child {{ text-align:center; }}
+
 .dh-barrow {{
   display:grid; grid-template-columns:150px 1fr 78px 120px;
   align-items:center; gap:10px; padding:5px 0;
@@ -1736,6 +1779,40 @@ STAGE_CSS = f"""
 }}
 </style>
 """
+
+
+def data_table(headers: list[str], rows: list[list], align: str | None = None,
+               total_row: list | None = None) -> str:
+    """Tabel portal dengan perataan kolom yang ditentukan pemanggil.
+
+    `align` = string kode per kolom: "l" rata kiri, "r" rata kanan.
+    Contoh: data_table(["Nama", "Hari"], rows, align="lr")
+
+    Kenapa tidak memakai table_html() warisan FTE: di sana SEMUA kolom selain
+    yang pertama rata kanan, karena tabel FTE isinya angka. Tabel portal banyak
+    berisi nama orang dan nama posisi, yang rata kanan jadi sulit dibaca.
+
+    Isi sel diasumsikan SUDAH di-escape oleh pemanggil (pakai esc()), supaya
+    penanda seperti warna achievement tetap bisa disisipkan.
+    """
+    align = align or "l" * len(headers)
+    align = (align + "l" * len(headers))[:len(headers)]
+
+    def cls(i):
+        return "dh-r" if align[i] == "r" else "dh-l"
+
+    thead = "".join(f'<th class="{cls(i)}">{h}</th>' for i, h in enumerate(headers))
+    body = []
+    for r in rows:
+        body.append("<tr>" + "".join(
+            f'<td class="{cls(i)}">{v}</td>' for i, v in enumerate(r)) + "</tr>")
+    tot = ""
+    if total_row:
+        tot = ('<tr class="tr-total">' + "".join(
+            f'<td class="{cls(i)}">{v}</td>' for i, v in enumerate(total_row)) + "</tr>")
+    return (f'<div class="dh-tablewrap"><table class="dh-table dh-portal">'
+            f"<thead><tr>{thead}</tr></thead><tbody>{''.join(body)}{tot}</tbody>"
+            f"</table></div>")
 
 
 def inject_portal_css():

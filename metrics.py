@@ -37,7 +37,7 @@ from __future__ import annotations
 import pandas as pd
 
 import config as C
-from theme import STAGE_ORDER
+from theme import MAIN_FUNNEL, STAGE_ORDER
 
 # ---------------------------------------------------------------------------
 # Peta kolom: satu tahap -> kolom-kolom yang mewakilinya di fix_centralized.
@@ -329,16 +329,17 @@ def funnel(sf: pd.DataFrame) -> pd.DataFrame:
     # bisa dipakai: banyak kandidat melewati Psikotes dan sebagian besar tidak
     # punya tanggal PRF, sehingga angkanya naik-turun dan konversi melompat di
     # atas 100% — persis yang terjadi di versi lama.
+    #
+    # PRF Approval dikeluarkan dari funnel: itu persetujuan permintaan, bukan
+    # tahap seleksi kandidat, dan kolomnya cuma terisi di 422 dari 1.396 baris.
     furthest = touched.groupby("cand_key")["stage_no"].max()
     rows = []
     base = None
     prev = None
-    for i, stage in enumerate(STAGE_ORDER, start=1):
+    for stage in MAIN_FUNNEL:
+        i = STAGE_ORDER.index(stage) + 1
         n = int((furthest >= i).sum())
-        # Screening CV jadi basis konversi, bukan PRF: kolom PRF hanya terisi di
-        # 422 dari 1.396 baris, jadi memakainya membuat konversi tahap kedua
-        # terlihat di atas 300%.
-        if stage == "Screening CV":
+        if base is None:
             base = n
         rows.append({
             "stage": stage,
@@ -462,3 +463,118 @@ def unmapped_initials(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.Dat
         onboarding=("status1", lambda s: (s == "CLOSE").sum()),
     )
     return g.sort_values("aktivitas", ascending=False).reset_index()
+
+
+def hire_trend(df: pd.DataFrame, lt: pd.DataFrame, exclude_levels=("Non Staff",)) -> pd.DataFrame:
+    """Median time-to-hire per bulan onboarding.
+
+    Non Staff dikecualikan secara default: 163 dari 164 hire Non Staff punya
+    tanggal screening, interview, dan onboarding yang persis sama (input borongan
+    di KCP), jadi lead time-nya nol dan akan menarik median ke bawah secara palsu.
+    """
+    onboard = df.set_index("cand_key")[ELAPSED_END]
+    j = lt.set_index("cand_key").join(onboard.rename("onboard_date"))
+    j = j[(j["status1"] == "CLOSE") & j["lt_elapsed"].notna() & (j["lt_elapsed"] > 0)]
+    if exclude_levels:
+        j = j[~j["level"].isin(exclude_levels)]
+    if j.empty:
+        return pd.DataFrame(columns=["period", "n", "median_lt"])
+
+    j["period"] = j["onboard_date"].dt.to_period("M")
+    g = j.groupby("period").agg(n=("lt_elapsed", "size"), median_lt=("lt_elapsed", "median"))
+    return g.reset_index().sort_values("period")
+
+
+def headline(df: pd.DataFrame, lt: pd.DataFrame) -> dict:
+    """Angka-angka untuk baris KPI di Overview."""
+    staff = lt[(lt["status1"] == "CLOSE") & (lt["level"] != "Non Staff")
+               & lt["lt_elapsed"].notna() & (lt["lt_elapsed"] > 0)]
+    scored = staff[staff["lt_status"].isin(["Onbudget", "Overbudget"])]
+    counts = df["status1"].value_counts()
+    return {
+        "candidates": len(df),
+        "hired": int(counts.get("CLOSE", 0)),
+        "open": int(counts.get("OPEN", 0)),
+        "failed": int(counts.get("FAILED", 0)),
+        "median_lt": float(staff["lt_elapsed"].median()) if len(staff) else None,
+        "p90_lt": float(staff["lt_elapsed"].quantile(0.9)) if len(staff) else None,
+        "lt_n": len(staff),
+        "over_pct": (float((scored["lt_status"] == "Overbudget").mean() * 100)
+                     if len(scored) else None),
+        "over_n": int((scored["lt_status"] == "Overbudget").sum()),
+        "scored_n": len(scored),
+        "date_errors": int(lt["date_error"].sum()),
+        "dup_names": int(df["is_duplicate_name"].sum()),
+    }
+
+
+# ===========================================================================
+# Weekly Report
+# ===========================================================================
+def new_hire_matrix(df: pd.DataFrame, year: int | None = None) -> pd.DataFrame:
+    """Jumlah onboarding per departemen per bulan — sheet "New Hire".
+
+    Baris = departemen, kolom = bulan, plus kolom Total. Baris terakhir berisi
+    total per bulan. Berbeda dengan sheet aslinya, total di sini SELALU sama
+    dengan jumlah isinya karena dihitung, bukan diketik (temuan T-06).
+    """
+    h = df[(df["status1"] == "CLOSE") & df["date_onboarding"].notna()].copy()
+    if year:
+        h = h[h["date_onboarding"].dt.year == year]
+    if h.empty:
+        return pd.DataFrame()
+
+    h["bulan"] = h["date_onboarding"].dt.month
+    dept = h["departement"].fillna("(tanpa departemen)")
+    pivot = pd.crosstab(dept, h["bulan"])
+
+    bulan_nama = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "Mei", 6: "Jun",
+                  7: "Jul", 8: "Agu", 9: "Sep", 10: "Okt", 11: "Nov", 12: "Des"}
+    pivot.columns = [bulan_nama[c] for c in pivot.columns]
+    pivot["Total"] = pivot.sum(axis=1)
+    pivot = pivot.sort_values("Total", ascending=False)
+    pivot.loc["TOTAL"] = pivot.sum()
+    return pivot.reset_index().rename(columns={"departement": "Departemen",
+                                               "index": "Departemen"})
+
+
+# Tiga panel "On Progress" pada sheet ONP, dipetakan ke nilai last_progress yang
+# dipakai database. Kandidat yang sedang di tahap ini adalah yang paling perlu
+# ditindaklanjuti minggu itu.
+ONP_PANELS = {
+    "Offering": ["Req Offering", "Offering Negotiation"],
+    "MCU": ["MCU", "Review MCU", "FU MCU"],
+    "Onboarding": ["Onboarding"],
+}
+
+
+def on_progress(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Kandidat yang sedang berjalan, dikelompokkan jadi tiga panel ONP."""
+    open_c = df[df["status1"] == "OPEN"]
+    out = {}
+    for panel, progresses in ONP_PANELS.items():
+        sel = open_c[open_c["last_progress"].isin(progresses)]
+        out[panel] = sel[["candidate_id", "position_name", "departement", "loc",
+                          "last_progress", "level"]].sort_values("loc")
+    return out
+
+
+def department_summary(df: pd.DataFrame) -> pd.DataFrame:
+    """Ringkasan per site x departemen: pipeline, hire, dan yang sedang berjalan.
+
+    Kolom "Need" TIDAK ada di sini. Angka kebutuhan berasal dari weekly report,
+    dan portal belum menyambungnya — menampilkan kolom kosong bernama Need akan
+    lebih menyesatkan daripada tidak menampilkannya sama sekali.
+    """
+    d = df.copy()
+    d["_hire"] = d["status1"] == "CLOSE"
+    d["_open"] = d["status1"] == "OPEN"
+    d["_fail"] = d["status1"] == "FAILED"
+    g = d.groupby(["loc", "departement"]).agg(
+        kandidat=("cand_key", "size"),
+        hire=("_hire", "sum"),
+        berjalan=("_open", "sum"),
+        gagal=("_fail", "sum"),
+    ).reset_index()
+    g["hire_rate"] = (g["hire"] / g["kandidat"] * 100).round(1)
+    return g.sort_values(["loc", "kandidat"], ascending=[True, False])

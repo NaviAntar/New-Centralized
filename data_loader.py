@@ -111,7 +111,7 @@ def load_holidays(source: str | pd.DataFrame | None = None) -> list[pd.Timestamp
                     C.MONITORING_SHEET_BACKEND, C.MONITORING_SPREADSHEET_ID)),
             ], header=None)
 
-        col = pd.to_datetime(df.iloc[:, 0], errors="coerce").dropna()
+        col = pd.to_datetime(df.iloc[:, 0], errors="coerce", format="mixed").dropna()
         if len(col) >= 5:
             return sorted(col.dt.normalize().unique().tolist())
     except Exception:

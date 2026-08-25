@@ -130,26 +130,48 @@ SITES = {
     "SSCP": {"label": "SSCP", "icon": "🔧", "loc_values": ["SSCP"], "active": False},
 }
 
-# Satu form Apps Script melayani semua site; pilihan site di Recruitment Room
-# dikirim sebagai query parameter `site`.
+# Tiap site punya deployment Apps Script sendiri.
 #
-# BELUM DIKONFIRMASI: apakah form ini memang sudah menggantikan empat form
-# per-site yang lama, dan apakah ia membaca parameter `site`. Kalau ternyata
-# tiap site tetap punya deployment sendiri, ubah FORM_URL jadi dict per site.
-FORM_URL = ("https://script.google.com/macros/s/"
-            "AKfycbyOxlEMzjJQ1cwICJFdCbaTiP-5N_UsQiP4gwqRRPBhiGcZCA3dKJItqh5nW07PwIGU/exec")
+# Form yang sudah ada melayani rekrutmen di HO, yang levelnya Staff. Site tambang
+# memakai form terpisah untuk Non Staff — Navi sedang membuatnya. Selama URL-nya
+# masih kosong, Recruitment Room menampilkan keadaan itu apa adanya, bukan
+# mengarahkan orang ke form yang salah.
+#
+# Menambahkan form baru: tempel URL deployment-nya di baris site yang sesuai.
+# Tidak ada tempat lain yang perlu diubah.
+FORM_URLS = {
+    "HO": ("https://script.google.com/macros/s/"
+           "AKfycbyOxlEMzjJQ1cwICJFdCbaTiP-5N_UsQiP4gwqRRPBhiGcZCA3dKJItqh5nW07PwIGU/exec"),
+    "BCP": "",
+    "KCP": "",
+    "ACP": "",
+    "SSCP": "",
+}
 
-# CATATAN UNTUK NAVI — form ini tidak akan tampil di dalam iframe sampai
-# doGet() di Code.gs memanggil:
-#     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-# Tanpa itu browser memblokir embed-nya dan yang muncul hanya kotak kosong.
+# Keterangan singkat tiap form, tampil di bawah judul kartu.
+FORM_NOTES = {
+    "HO": "Staff · rekrutmen HO",
+    "BCP": "Non Staff · menyusul",
+    "KCP": "Non Staff · menyusul",
+    "ACP": "Non Staff · menyusul",
+    "SSCP": "Non Staff · menyusul",
+}
+
+# CATATAN — form Apps Script tidak akan tampil di dalam iframe sampai doGet()
+# di Code.gs memanggil .setXFrameOptionsMode(ALLOWALL). Contoh kodenya ada di
+# README.md bagian "Form Apps Script belum mau di-embed".
 FORM_EMBED_HEIGHT = 900
+
+# Dashboard Looker tetap disematkan di Overview atas keputusan Navi, berdampingan
+# dengan KPI yang dihitung portal sendiri.
+LOOKER_EMBED_URL = ("https://lookerstudio.google.com/embed/reporting/"
+                    "a425625f-0af4-4b5c-8826-218a929b1333/page/YwLxF")
+LOOKER_EMBED_HEIGHT = 700
 
 
 def form_url_for(site_key: str) -> str:
-    """URL form untuk satu site. Site dikirim sebagai query parameter."""
-    sep = "&" if "?" in FORM_URL else "?"
-    return f"{FORM_URL}{sep}site={site_key}"
+    """URL form site tersebut. String kosong berarti formnya belum ada."""
+    return FORM_URLS.get(site_key, "")
 
 
 # ===========================================================================
