@@ -209,9 +209,7 @@ ini dibiarkan — mereka tampil dengan nilai nol, bukan mengambil data orang lai
 
 Kalau nanti inisialnya ketemu, ada dua cara memasukkannya:
 
-- **Sementara** — panel *Kelola recruiter* di halaman Weekly Report. Berlaku
-  untuk sesi itu saja, berguna untuk mencoba-coba.
-- **Permanen** — tambahkan ke `RECRUITER_NAMES` di `config.py`.
+Tambahkan ke `RECRUITER_NAMES` di `config.py` kalau inisialnya sudah diketahui.
 
 Inisial yang masih menganggur, diurutkan dari yang tersibuk: `AIC` (550
 aktivitas) · `FLI` (175) · `BEL` (112) · `SOM` (62) · `JAZ` (42) · `MEI` (5) ·
@@ -233,9 +231,9 @@ hal itu dinyatakan terbuka di layar.
 | Halaman | Status |
 |---|---|
 | Overview | Ringkasan (5 kartu) + embed Looker — dua bagian saja |
-| Weekly Report | Performance recruiter, New Hire, ringkasan site, On Progress, karyawan resign |
-| Tracking Kandidat | Satu kotak cari + daftar kandidat, tabel tahap, progress bar |
-| Tracking Posisi | Cari posisi langsung, site tertera di tiap baris, kandidat per posisi |
+| Weekly Report | Performance recruiter, New Hire, ringkasan site, On Progress, karyawan resign — semuanya mengikuti satu baris filter |
+| Tracking Kandidat | Satu kotak pencarian, tabel tahap, progress bar, kartu SLA |
+| Tracking Posisi | Satu kotak pencarian, langsung ke detail posisi dan kandidatnya |
 | Recruitment Room | Pilih site → link form & spreadsheet → form tersemat |
 
 Halaman yang belum dibangun tetap bisa dibuka dan menampilkan daftar isi yang
@@ -247,16 +245,28 @@ akan masuk ke sana, supaya tidak ada tombol yang mati tanpa penjelasan.
 halaman ini hanya berlaku untuk kartu dan chart portal — Looker punya filternya
 sendiri dan menghitung terpisah.
 
-**Weekly Report.** Tabel Performance dihitung dua langkah: tiap tahap yang
-seseorang pegang dirata-ratakan dulu (Screening rata-rata 1 hari, Interview HR
-rata-rata 2 hari, dan seterusnya), lalu rata-rata antar tahap itu dijumlahkan.
-SLA Budget mengikuti tahap yang sama, jadi keduanya selalu sebanding. Expander
-*Rincian per tahap* memperlihatkan asal tiap angkanya.
+**Weekly Report.** Satu baris filter di atas — Tahun, Bulan, Site — mengatur
+SELURUH bagian di bawahnya: Performance, New Hire, Ringkasan per site,
+On Progress, dan Karyawan resign.
 
-Filter bulan/tahun bisa memilih lebih dari satu. Memilih dua bulan membuat
-New Hire dan Ringkasan per site menampilkan satu kolom untuk tiap bulan plus
-kolom Total. Periodenya merujuk ke tanggal **screening CV** untuk Performance,
-dan tanggal **onboarding** untuk New Hire dan Ringkasan per site.
+Tabel Performance dihitung dua langkah:
+
+1. Kumpulkan kandidat yang ditangani orang itu.
+2. Untuk **setiap tahap proses** — PRF Approval sampai Onboarding — hitung
+   rata-rata lead time dan rata-rata budget di antara kandidat tadi.
+3. Jumlahkan rata-rata itu lintas tahap. Tidak dibagi lagi.
+
+Yang penting di langkah 2: seluruh tahap ikut, bukan hanya tahap yang punya
+kolom PIC di database. Versi sebelumnya hanya menghitung tujuh tahap ber-PIC,
+sehingga One Month Notice yang budget-nya saja 30 hari ikut terbuang dan total
+budget keluar cuma ~20 hari — mustahil untuk proses bertarget 60+ hari. Sekarang
+SLA Budget sejalan dengan matriks di `Monitoring 2026 › Backend`.
+
+Filter bulan bisa memilih lebih dari satu. Memilih dua bulan membuat New Hire
+dan Ringkasan per site menampilkan satu kolom untuk tiap bulan plus kolom Total.
+Periodenya merujuk ke tanggal **screening CV** untuk Performance, tanggal
+**onboarding** untuk New Hire dan Ringkasan per site, tanggal tahap
+masing-masing untuk On Progress, dan tanggal **resign** untuk Karyawan resign.
 
 **On Progress dan Karyawan resign** mereplikasi rumus QUERY yang sudah dipakai
 tim di sheet ONP dan Karyawan Resign, bukan tafsiran sendiri:
@@ -281,13 +291,14 @@ Sheet **Summary** belum punya kolom Need. Angka kebutuhan berasal dari weekly
 report dan portal belum menyambungnya; menampilkan kolom kosong bernama Need
 akan lebih menyesatkan daripada tidak menampilkannya.
 
-**Tracking Kandidat.** Kotak cari hanya menyaring; daftar di bawahnya yang
-memilih. Tiap barisnya bertuliskan *nama · posisi · site* — memakai nama posisi,
-bukan Position ID, karena kode seperti `R22R030012` tidak berarti apa-apa saat
-dibaca sekilas. Progress bar dihitung terhadap tahap yang berlaku untuk level
-itu, jadi kandidat yang sudah onboarding benar-benar mencapai 100%.
+**Tracking Kandidat & Tracking Posisi.** Keduanya memakai satu kotak saja.
+`st.selectbox` punya pencarian bawaan: ketik "tika clara" dan daftar di bawah
+kotak langsung menyusut, tiap barisnya bertuliskan *nama · posisi · departemen ·
+site*. Tidak ada lagi kotak cari terpisah lalu dropdown lagi.
 
-**Tracking Posisi.** Mengetik kata kunci langsung memunculkan posisi yang cocok,
-dengan site tertera sebagai chip berwarna di tiap baris — tidak perlu memilih
-site lebih dulu. Jadi mengetik "supervisor" langsung memperlihatkan semua
-Supervisor di semua site sekaligus dan bisa dibandingkan.
+Karena label pencocokannya memuat seluruh keterangan itu, mengetik "supervisor"
+atau "BCP" sama-sama menyaring — bukan hanya nama.
+
+Tracking Posisi langsung menampilkan detail posisi yang dipilih; tabel hasil
+pencarian sudah dihapus. Kolom kandidatnya: nama, posisi, departemen, level,
+loc, last progress, total LT, dan status.

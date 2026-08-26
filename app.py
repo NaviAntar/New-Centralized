@@ -239,42 +239,23 @@ def page_overview():
 def page_tracking_candidate():
     df, sf, lt = data_or_stop()
 
-    cari, site, status = filterbar("tc", [
-        {"label": "Cari kandidat", "key": "tc_q", "kind": "text", "width": 2,
-         "placeholder": "ketik sebagian nama, lalu pilih dari daftar di bawah"},
-        {"label": "Site", "key": "tc_site", "options": ["Semua site"] + list(C.SITES)},
-        {"label": "Status", "key": "tc_status",
-         "options": ["Semua", "OPEN", "CLOSE", "FAILED"]},
-    ])
-
-    pool = _site_filter(df, site)
-    if status != "Semua":
-        pool = pool[pool["status1"] == status]
-    if cari.strip():
-        pool = pool[pool["candidate_id"].str.contains(cari.strip(), case=False,
-                                                      na=False, regex=False)]
-
-    if pool.empty:
-        st.markdown(theme.empty_state(
-            "Tidak ada yang cocok",
-            "Longgarkan filternya, atau periksa lagi ejaan namanya."), unsafe_allow_html=True)
+    # Satu kotak saja. st.selectbox punya pencarian bawaan: ketik "tika clara"
+    # dan pilihannya langsung menyusut di bawah kotak, lengkap dengan posisi,
+    # departemen, dan site. Versi sebelumnya memisah kotak cari dan daftar
+    # pilihan, jadi orang harus mengetik lalu membuka dropdown lagi.
+    pilihan = M.candidate_options(df)
+    if not pilihan:
+        st.markdown(theme.empty_state("Belum ada kandidat", "—"), unsafe_allow_html=True)
         return
 
-    # Satu daftar pilihan saja. Versi sebelumnya punya kotak cari DAN dropdown
-    # terpisah yang isinya juga nama, jadi orang bingung mana yang menentukan.
-    # Sekarang kotak cari hanya menyaring; dropdown ini yang memilih.
-    #
-    # Label memakai NAMA POSISI, bukan Position ID — kode seperti "R22R030012"
-    # tidak berarti apa-apa saat dibaca sekilas.
-    pool = pool.copy()
-    pool["_label"] = (pool["candidate_id"].astype(str) + "  ·  "
-                      + pool["position_name"].fillna("(tanpa posisi)").astype(str)
-                      + "  ·  " + pool["loc"].fillna("—").astype(str))
-    peta = dict(zip(pool["_label"], pool["cand_key"]))
-    label = st.selectbox(f"Kandidat — {len(pool)} cocok", sorted(peta), key="tc_pick")
-    pilih = peta[label]
+    with st.container(key="filterbar_tc"):
+        label = st.selectbox(
+            "Cari kandidat — ketik nama, posisi, departemen, atau site",
+            list(pilihan), key="tc_pick",
+            help="Ketik sebagian nama; daftar di bawah langsung menyusut.")
+    pilih = pilihan[label]
 
-    row = pool[pool["cand_key"] == pilih].iloc[0]
+    row = df[df["cand_key"] == pilih].iloc[0]
     stages = sf[sf["cand_key"] == pilih].sort_values("stage_no")
     ltrow = lt[lt["cand_key"] == pilih].iloc[0]
     hstat = str(row["status1"] or "").upper()
@@ -303,20 +284,18 @@ def page_tracking_candidate():
     st.markdown(theme.progress_bar(selesai, len(berlaku), failed=(hstat == "FAILED")),
                 unsafe_allow_html=True)
 
-    m = st.columns(4, gap="small")
+    m = st.columns(3, gap="small")
+    telat = int(ltrow["stages_late"])
     kartu = [
-        ("Lead time berjalan", n(ltrow["lt_elapsed"]), "hari kerja, ujung ke ujung",
-         "⏱️", theme.BRAND["orange"]),
-        ("Jumlah durasi tahap", n(ltrow["lt_stage_sum"]), "hari yang benar-benar dikerjakan",
-         "🧮", theme.BRAND["navy"]),
-        ("Waktu menganggur", n(ltrow["lt_idle"]), "menunggu di antara tahap", "⏸️",
-         theme.STATUS["bad"] if (ltrow["lt_idle"] or 0) > 10 else theme.STATUS["warn"]),
-        ("Tahap terlambat", n(int(ltrow["stages_late"])), f'dari {selesai} tahap selesai',
-         "⚠️", theme.STATUS["bad"] if int(ltrow["stages_late"]) else theme.STATUS["good"]),
+        ("SLA", n(ltrow["lt_elapsed"]), "hari kerja berjalan", "⏱️", theme.BRAND["orange"]),
+        ("Budget SLA", n(ltrow["budget_total"]), f'target level {theme.esc(row["level"])}',
+         "🎯", theme.BRAND["navy"]),
+        ("Tahap terlambat", n(telat), f'dari {selesai} tahap selesai', "⚠️",
+         theme.STATUS["bad"] if telat else theme.STATUS["good"]),
     ]
     for col, (lab, val, sub, emo, warna) in zip(m, kartu):
         with col:
-            st.markdown(theme.kpi_card(lab, val, sub, emoji=emo, accent=warna, value_size=22),
+            st.markdown(theme.kpi_card(lab, val, sub, emoji=emo, accent=warna, value_size=24),
                         unsafe_allow_html=True)
 
     with theme.card("tc_stages", "Tahap seleksi",
@@ -352,112 +331,74 @@ def page_tracking_candidate():
 def page_tracking_position():
     df, sf, lt = data_or_stop()
 
-    cari, level, status = filterbar("tp", [
-        {"label": "Cari posisi", "key": "tp_q", "kind": "text", "width": 2,
-         "placeholder": "mis. supervisor, foreman, officer…"},
-        {"label": "Level", "key": "tp_level",
-         "options": ["Semua level"] + sorted(df["level"].dropna().unique().tolist())},
-        {"label": "Tampilkan", "key": "tp_status",
-         "options": ["Semua posisi", "Masih ada yang berjalan", "Belum ada hire"]},
-    ])
-
-    pool = df if level == "Semua level" else df[df["level"] == level]
-    hasil = M.position_search(pool, cari)
-
-    if status == "Masih ada yang berjalan":
-        hasil = hasil[hasil["berjalan"] > 0]
-    elif status == "Belum ada hire":
-        hasil = hasil[hasil["hire"] == 0]
-
-    if hasil.empty:
-        st.markdown(theme.empty_state(
-            "Tidak ada posisi yang cocok",
-            "Coba kata kunci yang lebih pendek — pencarian mencocokkan sebagian nama."),
-            unsafe_allow_html=True)
+    pilihan = M.position_options(df)
+    if not pilihan:
+        st.markdown(theme.empty_state("Belum ada posisi", "—"), unsafe_allow_html=True)
         return
 
+    with st.container(key="filterbar_tp"):
+        label = st.selectbox(
+            "Cari posisi — ketik nama posisi, departemen, atau site",
+            list(pilihan), key="tp_pick",
+            help="Ketik mis. \"supervisor\"; daftar di bawah langsung menyusut.")
+    posisi, loc = pilihan[label]
+
+    kand = M.position_candidates(df, lt, posisi, loc)
+    if kand.empty:
+        st.markdown(theme.empty_state("Tidak ada kandidat", "—"), unsafe_allow_html=True)
+        return
+
+    baris0 = kand.iloc[0]
     st.markdown(theme.section_heading(
-        1, "Hasil pencarian", f"{len(hasil)} posisi · site tertera di tiap baris"),
-        unsafe_allow_html=True)
+        1, theme.esc(posisi), f'{theme.esc(loc)} · {theme.esc(baris0.get("departement"))}',
+        tag=theme.esc(baris0.get("position_id"))), unsafe_allow_html=True)
 
-    with theme.card("tp_list", "Posisi", "diurutkan dari yang paling banyak berjalan"):
-        baris = []
-        for r in hasil.itertuples():
-            warna = theme.SITE_COLORS.get(_site_of(r.loc) or "", theme.NEUTRAL["text_soft"])
-            chip = (f'<span class="dh-pill" style="background:{theme.tint(warna, .88)};'
-                    f'color:{warna};border-color:{theme.tint(warna, .70)}">'
-                    f"{theme.esc(r.loc)}</span>")
-            baris.append([
-                theme.esc(r.position_name), chip, theme.esc(r.level),
-                theme.esc(r.departement), n(r.kandidat), n(r.hire),
-                (f'<b style="color:{theme.STATUS["warn"]}">{n(r.berjalan)}</b>'
-                 if r.berjalan else "0"),
-                n(r.gagal),
-            ])
-        st.markdown(theme.data_table(
-            ["Posisi", "Site", "Level", "Departemen", "Kandidat", "Hire", "Berjalan", "Gagal"],
-            baris, align="llllrrrr"), unsafe_allow_html=True)
-
-    # Satu posisi bisa ada di beberapa site, jadi pilihannya menyertakan site.
-    hasil = hasil.copy()
-    hasil["_label"] = hasil["position_name"].astype(str) + "  ·  " + hasil["loc"].astype(str)
-    pilih = st.selectbox("Lihat kandidatnya", hasil["_label"].tolist(), key="tp_pick")
-    baris_pos = hasil[hasil["_label"] == pilih].iloc[0]
-
-    st.markdown(theme.section_heading(
-        2, theme.esc(baris_pos["position_name"]),
-        f'{theme.esc(baris_pos["loc"])} · {theme.esc(baris_pos["departement"])}',
-        tag=theme.esc(baris_pos["position_id"])), unsafe_allow_html=True)
-
-    kand = M.position_candidates(df, baris_pos["position_name"], baris_pos["loc"])
     k = st.columns(4, gap="small")
-    for col, (lab, val, emo, warna) in zip(k, [
-        ("Total kandidat", n(baris_pos["kandidat"]), "👥", theme.BRAND["navy"]),
-        ("Hire", n(baris_pos["hire"]), "✅", theme.STATUS["good"]),
-        ("Masih berjalan", n(baris_pos["berjalan"]), "⏳", theme.STATUS["warn"]),
-        ("Gagal", n(baris_pos["gagal"]), "✕", theme.STATUS["bad"]),
-    ]):
+    hitung = [
+        ("Total kandidat", len(kand), "👥", theme.BRAND["navy"]),
+        ("Hire", int((kand["status1"] == "CLOSE").sum()), "✅", theme.STATUS["good"]),
+        ("Masih berjalan", int((kand["status1"] == "OPEN").sum()), "⏳", theme.STATUS["warn"]),
+        ("Gagal", int((kand["status1"] == "FAILED").sum()), "✕", theme.STATUS["bad"]),
+    ]
+    for col, (lab, val, emo, warna) in zip(k, hitung):
         with col:
-            st.markdown(theme.kpi_card(lab, val, "", emoji=emo, accent=warna, value_size=24),
+            st.markdown(theme.kpi_card(lab, n(val), "", emoji=emo, accent=warna, value_size=24),
                         unsafe_allow_html=True)
 
     with theme.card("tp_kand", "Kandidat untuk posisi ini", f"{len(kand)} orang"):
-        if kand.empty:
-            st.markdown(theme.empty_state("Belum ada kandidat", "—"), unsafe_allow_html=True)
-        else:
-            st.markdown(theme.data_table(
-                ["Kandidat", "Level", "Status", "Tahap terakhir", "Sumber CV",
-                 "Screening", "Onboarding"],
-                [[theme.esc(r.candidate_id), theme.esc(r.level),
-                  theme.result_pill(r.status1), theme.esc(r.last_progress),
-                  theme.esc(r.source_cv),
-                  theme.esc(r.start_screening_cv.date() if pd.notna(r.start_screening_cv) else None),
-                  theme.esc(r.date_onboarding.date() if pd.notna(r.date_onboarding) else None)]
-                 for r in kand.itertuples()], align="lllllll"), unsafe_allow_html=True)
+        st.markdown(theme.data_table(
+            ["Kandidat", "Posisi", "Departemen", "Level", "Loc", "Last progress",
+             "Total LT", "Status"],
+            [[theme.esc(r.candidate_id), theme.esc(r.position_name),
+              theme.esc(r.departement), theme.esc(r.level), theme.esc(r.loc),
+              theme.esc(r.last_progress),
+              n(r.total_lt) if pd.notna(r.total_lt) else "—",
+              theme.result_pill(r.status1)]
+             for r in kand.itertuples()], align="llllllrl"), unsafe_allow_html=True)
 
 
 # ===========================================================================
 # ④ WEEKLY REPORT
 # ===========================================================================
-def _recruiter_extra() -> dict:
-    """Pemetaan inisial tambahan yang dimasukkan lewat panel di halaman ini."""
-    return st.session_state.setdefault("recruiter_extra", {})
-
-
 def page_weekly():
     df, sf, lt = data_or_stop()
 
     tahun_ada = sorted(sf["screening_date"].dropna().dt.year.unique().tolist(), reverse=True)
-    bulan_ada = list(M.BULAN_NAMA.values())
     thn_default = [str(tahun_ada[0])] if tahun_ada else []
 
-    tahun_pilih, bulan_pilih = filterbar("wk", [
+    # Satu baris filter untuk SELURUH halaman. Semua bagian di bawah — Performance,
+    # New Hire, Ringkasan per site, On Progress, dan Karyawan resign — membaca
+    # pilihan yang sama.
+    tahun_pilih, bulan_pilih, site_pilih = filterbar("wk", [
         {"label": "Tahun", "key": "wk_year", "kind": "multi",
          "options": [str(y) for y in tahun_ada], "default": thn_default, "width": 1,
          "placeholder": "Pilih tahun"},
         {"label": "Bulan", "key": "wk_month", "kind": "multi",
-         "options": bulan_ada, "default": [], "width": 3,
+         "options": list(M.BULAN_NAMA.values()), "default": [], "width": 2,
          "placeholder": "Semua bulan — pilih beberapa untuk membandingkan"},
+        {"label": "Site", "key": "wk_site", "kind": "multi",
+         "options": list(C.SITES), "default": [], "width": 1,
+         "placeholder": "Semua site"},
     ])
 
     periods = periode_terpilih(tahun_pilih, bulan_pilih)
@@ -472,15 +413,17 @@ def page_weekly():
     else:
         dari = sampai = None
         label_periode = "sepanjang waktu"
+    label_site = ", ".join(site_pilih) if site_pilih else "semua site"
 
     # ── Performance ────────────────────────────────────────────────────────
     st.markdown(theme.section_heading(
         1, "Performance recruiter",
-        "rata-rata tiap tahap dijumlahkan — bukan lead time PRF sampai akhir"),
+        "rata-rata tiap tahap dijumlahkan, seluruh tahap proses ikut dihitung"),
         unsafe_allow_html=True)
 
-    perf = M.recruiter_performance(sf, dari, sampai, extra_map=_recruiter_extra())
-    with theme.card("wk_perf", "Performance", f"periode screening CV · {label_periode}"):
+    perf = M.recruiter_performance(sf, dari, sampai, sites=site_pilih)
+    with theme.card("wk_perf", "Performance",
+                    f"periode screening CV · {label_periode} · {label_site}"):
         baris = []
         for r in perf.itertuples():
             ach = r.achievement
@@ -492,77 +435,29 @@ def page_weekly():
                 n(r.sla_budget, 1) if pd.notna(r.sla_budget) else "—",
                 (f'<span style="color:{warna};font-weight:800">{n(ach, 1)}%</span>'
                  if pd.notna(ach) else "—"),
-                n(r.stages), n(r.candidates), n(r.onboarding),
+                n(r.candidates), n(r.onboarding),
             ])
         st.markdown(theme.data_table(
-            ["Nama", "SLA Actual", "SLA Budget", "Achievement", "Tahap", "Kandidat",
-             "Onboarding"], baris, align="lrrrrrr"), unsafe_allow_html=True)
+            ["Nama", "SLA Actual", "SLA Budget", "Achievement", "Kandidat", "Onboarding"],
+            baris, align="lrrrrr"), unsafe_allow_html=True)
         st.markdown(theme.inline_note(
-            "<b>SLA Actual</b> dihitung dua langkah: tiap tahap yang orang itu pegang "
-            "dirata-ratakan dulu, lalu rata-rata antar tahap dijumlahkan. <b>SLA Budget</b> "
-            "mengikuti tahap yang sama, jadi keduanya selalu sebanding. <b>Achievement</b> = "
-            "Budget ÷ Actual; di atas 100% berarti lebih cepat dari target. Kolom "
-            "<b>Onboarding</b> tidak bisa dijumlahkan ke bawah — satu kandidat ditangani "
-            "beberapa PIC dan masing-masing mendapat kreditnya.",
+            "Tiap tahap dirata-ratakan dulu di antara kandidat yang orang itu tangani, lalu "
+            "rata-rata antar tahap dijumlahkan — <b>seluruh tahap proses ikut</b>, termasuk "
+            "One Month Notice yang budget-nya 30 hari. Karena itu SLA Budget di sini sejalan "
+            "dengan target 60+ hari di matriks Backend. <b>Achievement</b> = Budget ÷ Actual; "
+            "di atas 100% berarti lebih cepat dari target. Kolom <b>Onboarding</b> tidak bisa "
+            "dijumlahkan ke bawah — satu kandidat dikreditkan ke semua PIC yang menanganinya.",
             block=True), unsafe_allow_html=True)
-
-    punya_data = perf[perf["stages"] > 0]["name"].tolist()
-    if punya_data:
-        with st.expander("Rincian per tahap — dari mana angka di atas berasal"):
-            siapa = st.selectbox("Recruiter", punya_data, key="wk_detail")
-            rinci = M.recruiter_stage_detail(sf, siapa, dari, sampai,
-                                             extra_map=_recruiter_extra())
-            if rinci.empty:
-                st.markdown(theme.empty_state("Belum ada data", "—"), unsafe_allow_html=True)
-            else:
-                total = [ "TOTAL", n(rinci["kandidat"].sum()), n(rinci["avg_lt"].sum(), 1),
-                          n(rinci["avg_budget"].sum(), 1), "" ]
-                st.markdown(theme.data_table(
-                    ["Tahap", "Kandidat", "Rata-rata LT", "Rata-rata budget", "Achievement"],
-                    [[theme.esc(r.stage), n(r.kandidat), n(r.avg_lt, 1), n(r.avg_budget, 1),
-                      f"{n(r.achievement, 1)}%" if pd.notna(r.achievement) else "—"]
-                     for r in rinci.itertuples()],
-                    align="lrrrr", total_row=total), unsafe_allow_html=True)
-
-    if auth.can_do("edit_recruiter"):
-        with st.expander("Kelola recruiter — petakan inisial ke nama lengkap"):
-            st.markdown(theme.inline_note(
-                "Database lama memakai inisial, tim sekarang memakai nama lengkap. Pemetaan "
-                "di sini berlaku untuk sesi ini saja. Supaya permanen, tambahkan ke "
-                "<code>RECRUITER_NAMES</code> di <code>config.py</code>.", block=True),
-                unsafe_allow_html=True)
-            belum = M.unmapped_initials(sf, extra_map=_recruiter_extra())
-            if belum.empty:
-                st.markdown(theme.empty_state("Semua inisial sudah terpetakan", "—", emoji="✅"),
-                            unsafe_allow_html=True)
-            else:
-                st.markdown(theme.data_table(
-                    ["Inisial", "Aktivitas", "Kandidat", "Onboarding"],
-                    [[theme.esc(r.pic_initial), n(r.aktivitas), n(r.kandidat), n(r.onboarding)]
-                     for r in belum.itertuples()], align="lrrr"), unsafe_allow_html=True)
-            c1, c2, c3 = st.columns([1, 2, 1])
-            with c1:
-                ini = st.text_input("Inisial", key="wk_ini", placeholder="mis. AIC")
-            with c2:
-                nm = st.text_input("Nama lengkap", key="wk_nama")
-            with c3:
-                st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
-                if st.button("Tambahkan", type="primary", width="stretch", key="wk_add"):
-                    if ini.strip() and nm.strip():
-                        _recruiter_extra()[ini.strip().upper()] = nm.strip()
-                        st.rerun()
-                    else:
-                        st.warning("Isi inisial dan nama lengkapnya.")
 
     # ── New Hire ───────────────────────────────────────────────────────────
     st.markdown(theme.section_heading(2, "New Hire", "onboarding per departemen"),
                 unsafe_allow_html=True)
-    with theme.card("wk_nh", "New Hire", label_periode):
-        nh = M.new_hire_matrix(df, periods)
+    with theme.card("wk_nh", "New Hire", f"{label_periode} · {label_site}"):
+        nh = M.new_hire_matrix(df, periods, sites=site_pilih)
         if nh.empty:
             st.markdown(theme.empty_state(
                 "Belum ada onboarding di periode ini",
-                "Pilih tahun atau bulan lain di filter atas."), unsafe_allow_html=True)
+                "Ubah pilihan tahun, bulan, atau site di filter atas."), unsafe_allow_html=True)
         else:
             kolom = list(nh.columns)
             isi = [[theme.esc(r[0])] + [n(v) for v in r[1:]] for r in nh.values.tolist()]
@@ -573,12 +468,12 @@ def page_weekly():
     # ── Ringkasan per site ─────────────────────────────────────────────────
     st.markdown(theme.section_heading(3, "Ringkasan per site", "onboarding per site"),
                 unsafe_allow_html=True)
-    with theme.card("wk_sum", "Summary", label_periode):
-        sm = M.summary_matrix(df, periods)
+    with theme.card("wk_sum", "Summary", f"{label_periode} · {label_site}"):
+        sm = M.summary_matrix(df, periods, sites=site_pilih)
         if sm.empty:
             st.markdown(theme.empty_state(
                 "Belum ada onboarding di periode ini",
-                "Pilih tahun atau bulan lain di filter atas."), unsafe_allow_html=True)
+                "Ubah pilihan tahun, bulan, atau site di filter atas."), unsafe_allow_html=True)
         else:
             kolom = list(sm.columns)
             isi = [[theme.esc(r[0])] + [n(v) for v in r[1:]] for r in sm.values.tolist()]
@@ -588,9 +483,9 @@ def page_weekly():
 
     # ── On Progress ────────────────────────────────────────────────────────
     st.markdown(theme.section_heading(
-        4, "On Progress", "bulan berjalan · mengikuti rumus sheet ONP"),
+        4, "On Progress", "mengikuti rumus sheet ONP, mengikuti filter di atas"),
         unsafe_allow_html=True)
-    panels = M.on_progress(df)
+    panels = M.on_progress(df, periods=periods, sites=site_pilih)
     cols = st.columns(3, gap="small")
     for col, (nama, sel) in zip(cols, panels.items()):
         with col, theme.card(f"wk_onp_{nama}", nama, f"{len(sel)} kandidat"):
@@ -605,9 +500,11 @@ def page_weekly():
                      for r in sel.itertuples()], align="llll"), unsafe_allow_html=True)
 
     # ── Karyawan resign ────────────────────────────────────────────────────
-    st.markdown(theme.section_heading(5, "Karyawan resign", "bulan berjalan"),
-                unsafe_allow_html=True)
-    with theme.card("wk_resign", "Resign", "level di bawah 11, berhenti sebelum kontrak habis"):
+    st.markdown(theme.section_heading(
+        5, "Karyawan resign", "tanggal resign dan site mengikuti filter di atas"),
+        unsafe_allow_html=True)
+    with theme.card("wk_resign", "Resign",
+                    f"{label_periode} · {label_site} · level di bawah 11"):
         mpp = get_mpp()
         if mpp is None:
             st.markdown(theme.empty_state(
@@ -616,17 +513,17 @@ def page_weekly():
                 "spreadsheet-nya di-share 'Anyone with the link — Viewer'.", emoji="🔌"),
                 unsafe_allow_html=True)
         else:
-            res = M.resign(mpp)
+            res = M.resign(mpp, periods=periods, sites=site_pilih)
             if res.empty:
-                st.markdown(theme.empty_state("Tidak ada yang resign bulan ini", "—"),
+                st.markdown(theme.empty_state("Tidak ada yang resign di periode ini", "—"),
                             unsafe_allow_html=True)
             else:
                 st.markdown(theme.data_table(
                     ["Karyawan", "Posisi", "Site", "Tanggal resign", "Akhir kontrak", "Level"],
-                    [[theme.esc(r.Karyawan), theme.esc(r._2), theme.esc(r.Site),
-                      theme.esc(r._4.date() if pd.notna(r._4) else None),
-                      theme.esc(r._5.date() if pd.notna(r._5) else None),
-                      n(r.Level)] for r in res.itertuples()],
+                    [[theme.esc(r[1]), theme.esc(r[2]), theme.esc(r[3]),
+                      theme.esc(r[4].date() if pd.notna(r[4]) else None),
+                      theme.esc(r[5].date() if pd.notna(r[5]) else None),
+                      n(r[6])] for r in res.itertuples()],
                     align="lllllr"), unsafe_allow_html=True)
 
 

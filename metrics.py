@@ -388,56 +388,76 @@ def recruiter_name(initial: str, extra_map: dict | None = None) -> str | None:
     return mapping.get(str(initial).strip().upper())
 
 
-def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
-                          extra_map: dict | None = None) -> pd.DataFrame:
-    """Tabel performance per PIC.
+def recruiter_owned(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.DataFrame:
+    """Peta kandidat -> recruiter yang menanganinya.
 
-    Cara hitungnya dua langkah, sesuai arahan Navi:
-
-      1. Untuk tiap PIC, tiap TAHAP yang ia pegang dirata-ratakan dulu.
-         Misal Screening rata-rata 1 hari, Interview HR rata-rata 2 hari.
-      2. Rata-rata tiap tahap itu lalu DIJUMLAHKAN jadi satu angka.
-         SLA Actual = 1 + 2 + ... ; SLA Budget mengikuti tahap yang sama.
-
-    Kenapa bukan dirata-ratakan langsung per kandidat: dengan cara itu orang
-    yang menangani banyak tahap tapi hanya untuk sedikit kandidat tenggelam,
-    dan angkanya keluar terlalu kecil untuk dibaca sebagai lead time. Menjumlah
-    rata-rata per tahap membuat hasilnya sebanding dengan budget total tahap
-    yang benar-benar ia pegang.
-
-    Filter tanggal merujuk ke TANGGAL SCREENING CV kandidat, bukan tanggal tahap,
-    supaya satu kandidat selalu utuh di dalam satu periode.
-
-    PENTING: kolom Onboarding TIDAK bisa dijumlahkan ke bawah. Satu kandidat
-    ditangani beberapa PIC dan tiap PIC mendapat kreditnya (keputusan Navi).
+    Seseorang dianggap menangani sebuah kandidat kalau namanya muncul sebagai PIC
+    di tahap mana pun. Satu kandidat bisa dimiliki lebih dari satu orang; itu
+    disengaja, karena proses rekrutmen memang dikerjakan bergantian.
     """
-    work = sf[sf["pic_initial"].notna() & sf["lt"].notna() & sf["budget"].notna()].copy()
+    pic = sf[sf["pic_initial"].notna()][["cand_key", "pic_initial", "loc", "screening_date"]].copy()
+    pic["name"] = pic["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
+    pic["name"] = pic["name"].fillna(C.OTHER_RECRUITER_LABEL)
+    return pic.drop_duplicates(["cand_key", "name"])
+
+
+def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
+                          extra_map: dict | None = None, sites=None) -> pd.DataFrame:
+    """Tabel performance per recruiter.
+
+    Cara hitungnya, sesuai arahan Navi:
+
+      1. Kumpulkan kandidat yang ditangani orang itu.
+      2. Untuk SETIAP tahap proses — dari PRF Approval sampai Onboarding —
+         hitung rata-rata lead time dan rata-rata budget di antara kandidat tadi.
+      3. Jumlahkan rata-rata itu lintas tahap. Tidak dibagi lagi.
+
+    Yang penting di langkah 2: SELURUH tahap ikut, bukan hanya tahap yang punya
+    kolom PIC di database. Versi sebelumnya hanya menghitung tujuh tahap ber-PIC,
+    sehingga One Month Notice yang budget-nya saja 30 hari ikut terbuang dan
+    total budget keluar cuma ~20 hari — jelas tidak masuk akal untuk proses yang
+    targetnya 60+ hari. Sekarang budget totalnya sejalan dengan matriks SLA di
+    Monitoring 2026 > Backend.
+
+    Filter tanggal merujuk ke TANGGAL SCREENING CV kandidat, jadi satu kandidat
+    selalu utuh dalam satu periode.
+
+    PENTING: kolom Onboarding tidak bisa dijumlahkan ke bawah — satu kandidat
+    dikreditkan ke semua PIC yang menanganinya (keputusan Navi).
+    """
+    milik = recruiter_owned(sf, extra_map)
 
     if date_from is not None:
-        work = work[work["screening_date"] >= pd.Timestamp(date_from)]
+        milik = milik[milik["screening_date"] >= pd.Timestamp(date_from)]
     if date_to is not None:
-        work = work[work["screening_date"] <= pd.Timestamp(date_to)]
+        milik = milik[milik["screening_date"] <= pd.Timestamp(date_to)]
+    if sites:
+        milik = milik[milik["loc"].isin(C.loc_values_for(sites))]
 
-    work["name"] = work["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
-    work["name"] = work["name"].fillna(C.OTHER_RECRUITER_LABEL)
+    kolom = ["name", "sla_actual", "sla_budget", "stages", "candidates",
+             "onboarding", "achievement"]
+    if milik.empty:
+        g = pd.DataFrame(columns=kolom[1:], index=pd.Index([], name="name"))
+    else:
+        # Seluruh tahap kandidat yang ditangani orang itu — bukan hanya tahap
+        # yang ia pegang sendiri.
+        semua = sf.merge(milik[["cand_key", "name"]], on="cand_key", how="inner")
+        terpakai = semua[semua["applicable"] & semua["budget"].notna()]
 
-    # Langkah 1 — rata-rata per (orang, tahap).
-    per_stage = work.groupby(["name", "stage"]).agg(
-        lt=("lt", "mean"),
-        budget=("budget", "mean"),
-        n=("cand_key", "nunique"),
-    ).reset_index()
+        per_stage = terpakai.groupby(["name", "stage"]).agg(
+            lt=("lt", "mean"),
+            budget=("budget", "mean"),
+        ).reset_index()
 
-    # Langkah 2 — jumlahkan rata-rata tadi lintas tahap.
-    g = per_stage.groupby("name").agg(
-        sla_actual=("lt", "sum"),
-        sla_budget=("budget", "sum"),
-        stages=("stage", "nunique"),
-    )
-    g["candidates"] = work.groupby("name")["cand_key"].nunique()
-    g["onboarding"] = (work[work["status1"] == "CLOSE"]
-                       .groupby("name")["cand_key"].nunique())
-    g["achievement"] = (g["sla_budget"] / g["sla_actual"] * 100).where(g["sla_actual"] > 0)
+        g = per_stage.groupby("name").agg(
+            sla_actual=("lt", "sum"),
+            sla_budget=("budget", "sum"),
+            stages=("stage", "nunique"),
+        )
+        g["candidates"] = milik.groupby("name")["cand_key"].nunique()
+        hire = semua[semua["status1"] == "CLOSE"]
+        g["onboarding"] = hire.groupby("name")["cand_key"].nunique()
+        g["achievement"] = (g["sla_budget"] / g["sla_actual"] * 100).where(g["sla_actual"] > 0)
 
     # Roster selalu tampil lengkap, termasuk orang yang belum punya data —
     # baris nol lebih jujur daripada nama yang hilang begitu saja.
@@ -450,37 +470,7 @@ def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
     g = g.sort_values(["_sort"]).drop(columns="_sort")
 
     return g.reset_index().rename(columns={"index": "name"}).round(
-        {"sla_actual": 1, "sla_budget": 1, "achievement": 1})
-
-
-def recruiter_stage_detail(sf: pd.DataFrame, name: str, date_from=None, date_to=None,
-                           extra_map: dict | None = None) -> pd.DataFrame:
-    """Rincian per tahap untuk satu PIC — memperlihatkan asal angka di tabel.
-
-    Tanpa ini pembaca hanya melihat satu angka gabungan dan tidak bisa tahu
-    tahap mana yang membuatnya besar.
-    """
-    work = sf[sf["pic_initial"].notna() & sf["lt"].notna() & sf["budget"].notna()].copy()
-    if date_from is not None:
-        work = work[work["screening_date"] >= pd.Timestamp(date_from)]
-    if date_to is not None:
-        work = work[work["screening_date"] <= pd.Timestamp(date_to)]
-    work["name"] = work["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
-    work["name"] = work["name"].fillna(C.OTHER_RECRUITER_LABEL)
-
-    sel = work[work["name"] == name]
-    if sel.empty:
-        return pd.DataFrame(columns=["stage", "kandidat", "avg_lt", "avg_budget", "achievement"])
-
-    g = sel.groupby("stage").agg(
-        kandidat=("cand_key", "nunique"),
-        avg_lt=("lt", "mean"),
-        avg_budget=("budget", "mean"),
-    ).reset_index()
-    g["achievement"] = (g["avg_budget"] / g["avg_lt"] * 100).where(g["avg_lt"] > 0)
-    g["urutan"] = g["stage"].map(lambda s: STAGE_ORDER.index(s) if s in STAGE_ORDER else 99)
-    return g.sort_values("urutan").drop(columns="urutan").round(
-        {"avg_lt": 1, "avg_budget": 1, "achievement": 1})
+        {"sla_actual": 1, "sla_budget": 1, "achievement": 1})[kolom]
 
 
 def unmapped_initials(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.DataFrame:
@@ -562,7 +552,8 @@ def _periode_kolom(periods: list[tuple[int, int]]) -> list[tuple[tuple[int, int]
     return [(p, periode_label(p[0], p[1], banyak)) for p in sorted(periods)]
 
 
-def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]]) -> pd.DataFrame:
+def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
+                    sites=None) -> pd.DataFrame:
     """Onboarding per departemen untuk periode yang dipilih.
 
     `periods` = daftar (tahun, bulan). Tiap periode jadi satu kolom, ditutup
@@ -575,6 +566,8 @@ def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]]) -> pd.Data
         return pd.DataFrame()
 
     h = df[(df["status1"] == "CLOSE") & df["date_onboarding"].notna()].copy()
+    if sites:
+        h = h[h["loc"].isin(C.loc_values_for(sites))]
     if h.empty:
         return pd.DataFrame()
 
@@ -595,7 +588,8 @@ def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]]) -> pd.Data
     return tabel.reset_index().rename(columns={"_dept": "Departemen", "index": "Departemen"})
 
 
-def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]]) -> pd.DataFrame:
+def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
+                   sites=None) -> pd.DataFrame:
     """Onboarding per SITE untuk periode yang dipilih — bentuknya sama dengan New Hire.
 
     Periodenya memakai tanggal onboarding, jadi angkanya bisa disandingkan
@@ -605,6 +599,8 @@ def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]]) -> pd.DataF
         return pd.DataFrame()
 
     h = df[(df["status1"] == "CLOSE") & df["date_onboarding"].notna()].copy()
+    if sites:
+        h = h[h["loc"].isin(C.loc_values_for(sites))]
     if h.empty:
         return pd.DataFrame()
 
@@ -628,49 +624,76 @@ def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]]) -> pd.DataF
 # ===========================================================================
 # Tracking Posisi
 # ===========================================================================
-def position_search(df: pd.DataFrame, query: str = "", limit: int = 200) -> pd.DataFrame:
-    """Cari posisi langsung dari kata kunci — site menyertai tiap barisnya.
+def candidate_options(df: pd.DataFrame) -> dict[str, str]:
+    """Label pencarian -> cand_key, untuk selectbox Tracking Kandidat.
 
-    Sengaja TIDAK meminta pilih site dulu: mengetik "supervisor" harus langsung
-    memunculkan semua Supervisor beserta site masing-masing, supaya orang bisa
-    membandingkan antar site tanpa berpindah halaman.
+    Labelnya memuat nama, posisi, departemen, dan site sekaligus. Karena
+    st.selectbox mencocokkan ketikan ke seluruh isi label, mengetik "tika",
+    "supervisor", atau "BCP" sama-sama menyaring daftarnya.
+    """
+    d = df.sort_values("candidate_id")
+    label = (d["candidate_id"].astype(str) + "  ·  "
+             + d["position_name"].fillna("(tanpa posisi)").astype(str) + "  ·  "
+             + d["departement"].fillna("—").astype(str) + "  ·  "
+             + d["loc"].fillna("—").astype(str))
+    return dict(zip(label, d["cand_key"]))
+
+
+def position_options(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
+    """Label pencarian -> (nama posisi, site), untuk selectbox Tracking Posisi.
+
+    Satu posisi bisa ada di beberapa site, jadi site ikut jadi bagian kunci —
+    bukan navigasi terpisah. Mengetik "supervisor" langsung memunculkan semua
+    Supervisor beserta site masing-masing dalam satu daftar.
     """
     d = df[df["position_name"].notna()].copy()
-    q = str(query or "").strip()
-    if q:
-        d = d[d["position_name"].str.contains(q, case=False, na=False, regex=False)]
     if d.empty:
-        return pd.DataFrame(columns=["position_name", "loc", "position_id", "departement",
-                                     "level", "kandidat", "hire", "berjalan", "gagal"])
-
-    d["_h"] = d["status1"] == "CLOSE"
-    d["_o"] = d["status1"] == "OPEN"
-    d["_f"] = d["status1"] == "FAILED"
-    g = d.groupby(["position_name", "loc"]).agg(
-        position_id=("position_id", "first"),
-        departement=("departement", "first"),
-        level=("level", "first"),
-        kandidat=("cand_key", "nunique"),
-        hire=("_h", "sum"),
-        berjalan=("_o", "sum"),
-        gagal=("_f", "sum"),
-    ).reset_index()
-    return g.sort_values(["berjalan", "kandidat"], ascending=False).head(limit)
+        return {}
+    g = (d.groupby(["position_name", "loc"])
+           .agg(departement=("departement", "first"), kandidat=("cand_key", "nunique"))
+           .reset_index()
+           .sort_values(["position_name", "loc"]))
+    label = (g["position_name"].astype(str) + "  ·  " + g["loc"].fillna("—").astype(str)
+             + "  ·  " + g["departement"].fillna("—").astype(str)
+             + "  ·  " + g["kandidat"].astype(str) + " kandidat")
+    return dict(zip(label, zip(g["position_name"], g["loc"])))
 
 
-def position_candidates(df: pd.DataFrame, position_name: str, loc: str | None = None) -> pd.DataFrame:
-    """Semua kandidat yang pernah diproses untuk satu posisi di satu site."""
+def position_candidates(df: pd.DataFrame, lt: pd.DataFrame, position_name: str,
+                        loc: str | None = None) -> pd.DataFrame:
+    """Kandidat untuk satu posisi di satu site, lengkap dengan total lead time.
+
+    Kolomnya sengaja dibatasi pada yang dipakai saat menilai pemenuhan posisi:
+    nama, posisi, departemen, level, lokasi, tahap terakhir, total LT, status.
+    """
     d = df[df["position_name"] == position_name]
     if loc:
         d = d[d["loc"] == loc]
-    kol = ["candidate_id", "cand_key", "level", "loc", "status1", "last_progress",
-           "source_cv", "start_screening_cv", "date_onboarding"]
+    if d.empty:
+        return pd.DataFrame(columns=["candidate_id", "position_name", "position_id",
+                                     "departement", "level", "loc", "last_progress",
+                                     "total_lt", "status1"])
+
+    # Sheet sumber sudah punya kolom bernama total_lt, tapi isinya jumlah durasi
+    # tahap — bukan lead time end-to-end (temuan T-01). Kolom itu dibuang lebih
+    # dulu supaya tidak ada dua kolom bernama sama dengan arti berbeda.
+    d = d.drop(columns=[c for c in ("total_lt", "tot_lt") if c in d.columns])
+    d = d.merge(lt[["cand_key", "lt_elapsed"]], on="cand_key", how="left")
+    d = d.rename(columns={"lt_elapsed": "total_lt"})
+    kol = ["candidate_id", "position_name", "position_id", "departement", "level",
+           "loc", "last_progress", "total_lt", "status1"]
     kol = [c for c in kol if c in d.columns]
-    return d[kol].sort_values("start_screening_cv", ascending=False)
+    urut = {"OPEN": 0, "CLOSE": 1, "FAILED": 2}
+    d["_u"] = d["status1"].map(urut).fillna(3)
+    return d.sort_values(["_u", "candidate_id"])[kol]
 
 
-# --- On Progress -----------------------------------------------------------
-# Ketiga panel di bawah MEREPLIKASI rumus QUERY di sheet ONP milik tim, bukan
+
+
+# ===========================================================================
+# On Progress & Karyawan resign — replikasi rumus sheet Report
+# ===========================================================================
+# Ketiga panel ONP dan panel resign MEREPLIKASI rumus QUERY milik tim, bukan
 # tafsiran sendiri. Rumus aslinya membaca sheet "Backend Monitoring"; kolom yang
 # dipakai dipetakan ke fix_centralized seperti ini:
 #
@@ -695,53 +718,77 @@ def _month_bounds(ref=None):
     return awal, awal + pd.offsets.MonthBegin(1)
 
 
-def on_progress(df: pd.DataFrame, ref=None) -> dict[str, pd.DataFrame]:
+def _periode_mask(seri: pd.Series, periods) -> pd.Series:
+    """True untuk baris yang tanggalnya jatuh di salah satu (tahun, bulan) terpilih."""
+    if not periods:
+        return pd.Series(True, index=seri.index)
+    ok = pd.Series(False, index=seri.index)
+    for thn, bln in periods:
+        ok |= (seri.dt.year == thn) & (seri.dt.month == bln)
+    return ok & seri.notna()
+
+
+def on_progress(df: pd.DataFrame, periods=None, sites=None) -> dict[str, pd.DataFrame]:
     """Tiga panel On Progress, mengikuti rumus sheet ONP.
 
-    Offering    status OPEN, tahap Offering, START REQ OFFERING di bulan berjalan
-    MCU         status OPEN, tahap MCU/Review MCU/FU MCU, OL SENT di bulan berjalan
-    Onboarding  hasil MCU FIT TO WORK dan tanggal onboarding masih di depan
-                (tanpa filter bulan — ini daftar yang akan datang, bukan riwayat)
+    Offering    status OPEN, tahap Offering, START REQ OFFERING di periode terpilih
+    MCU         status OPEN, tahap MCU/Review MCU/FU MCU, OL SENT di periode terpilih
+    Onboarding  hasil MCU FIT TO WORK, tanggal onboarding di periode terpilih
+
+    Rumus aslinya mematok bulan berjalan lewat EOMONTH(TODAY()). Di portal, "bulan
+    berjalan" itu diganti periode yang dipilih di filter; kalau filternya kosong,
+    hasilnya sama persis dengan rumus aslinya.
     """
-    awal, berikut = _month_bounds(ref)
-    prog = df["last_progress"].astype(str).str.strip().str.upper()
-    buka = df["status1"] == "OPEN"
+    d = df
+    if sites:
+        d = d[d["loc"].isin(C.loc_values_for(sites))]
+
+    prog = d["last_progress"].astype(str).str.strip().str.upper()
+    buka = d["status1"] == "OPEN"
     kol = ["candidate_id", "position_name", "departement", "loc", "last_progress", "level"]
 
-    def _ambil(mask, tgl_col, label):
-        sel = df[mask].copy()
-        sel["tanggal"] = sel[tgl_col] if tgl_col in sel.columns else pd.NaT
+    def _ambil(mask, tgl_col):
+        sel = d[mask].copy()
+        sel["tanggal"] = sel[tgl_col]
         return sel[kol + ["tanggal"]].sort_values(["loc", "candidate_id"])
 
     offering = _ambil(
         buka & prog.isin(ONP_OFFERING_PROGRESS)
-        & df["start_offering"].between(awal, berikut, inclusive="left"),
-        "start_offering", "Offering")
+        & _periode_mask(d["start_offering"], periods), "start_offering")
 
     mcu = _ambil(
         buka & prog.isin(ONP_MCU_PROGRESS)
-        & df["ol_sent_to_candidate"].between(awal, berikut, inclusive="left"),
-        "ol_sent_to_candidate", "MCU")
+        & _periode_mask(d["ol_sent_to_candidate"], periods), "ol_sent_to_candidate")
 
-    hari_ini = pd.Timestamp(ref).normalize() if ref is not None else pd.Timestamp.today().normalize()
-    fit = df["result_fu_mcu"].astype(str).str.strip().str.upper() == "FIT TO WORK"
-    onboard = _ambil(fit & (df["date_onboarding"] > hari_ini), "date_onboarding", "Onboarding")
+    fit = d["result_fu_mcu"].astype(str).str.strip().str.upper() == "FIT TO WORK"
+    if periods:
+        onboard = _ambil(fit & _periode_mask(d["date_onboarding"], periods), "date_onboarding")
+    else:
+        # Tanpa filter, ikuti rumus aslinya: yang akan datang, bukan riwayat.
+        hari_ini = pd.Timestamp.today().normalize()
+        onboard = _ambil(fit & (d["date_onboarding"] > hari_ini), "date_onboarding")
 
     return {"Offering": offering, "MCU": mcu, "Onboarding": onboard}
 
 
-def resign(mpp: pd.DataFrame, ref=None) -> pd.DataFrame:
-    """Karyawan resign bulan berjalan — replikasi rumus sheet "Karyawan Resign".
+def resign(mpp: pd.DataFrame, periods=None, sites=None) -> pd.DataFrame:
+    """Karyawan resign — replikasi rumus sheet "Karyawan Resign".
 
-    Sumbernya sheet "Update MPP" di spreadsheet Report, bukan database kandidat.
-    Rumus aslinya menggabungkan dua QUERY: yang berhenti sebelum kontrak habis,
-    dan yang memang tidak punya tanggal akhir kontrak.
+    Rumus aslinya menggabungkan dua QUERY atas sheet "Update MPP":
+      End Date terisi · Level < 11 · Position Name bukan 'Internship'
+      · End Date di bulan berjalan
+      · DAN (End Date < Contract End Date  ATAU  Contract End Date kosong)
 
-    Diverifikasi terhadap sheet: 18 dari 18 nama cocok persis untuk Agustus 2026.
+    Di portal "bulan berjalan" diganti periode yang dipilih di filter, dan filter
+    site memakai peta nama lokasi panjang (ACP = Asam-Asam Coal Project). Tanpa
+    filter, hasilnya sama persis dengan rumus aslinya.
+
+    Diverifikasi: 18 dari 18 nama cocok dengan sheet untuk Agustus 2026.
     """
-    if mpp is None or mpp.empty:
-        return pd.DataFrame(columns=["Karyawan", "Position Name", "Site",
-                                     "Resign Date", "End Contract", "Level"])
+    kosong = pd.DataFrame(columns=["Karyawan", "Position Name", "Site",
+                                   "Resign Date", "End Contract", "Level"])
+    if mpp is None or getattr(mpp, "empty", True):
+        return kosong
 
     d = mpp.copy()
     d.columns = [str(c).strip() for c in d.columns]
@@ -749,38 +796,27 @@ def resign(mpp: pd.DataFrame, ref=None) -> pd.DataFrame:
         d[c] = pd.to_datetime(d.get(c), errors="coerce")
     d["Level"] = pd.to_numeric(d.get("Level"), errors="coerce")
 
-    awal, berikut = _month_bounds(ref)
+    if periods:
+        periode_ok = _periode_mask(d["End Date"], periods)
+    else:
+        awal, berikut = _month_bounds()
+        periode_ok = d["End Date"].between(awal, berikut, inclusive="left")
+
     # Level >= 11 itu non-staff operator, tidak masuk laporan ini.
     mask = (
         d["End Date"].notna()
         & (d["Level"] < 11)
         & (d.get("Position Name") != "Internship")
-        & d["End Date"].between(awal, berikut, inclusive="left")
+        & periode_ok
         & ((d["End Date"] < d["Contract End Date"]) | d["Contract End Date"].isna())
     )
+    if sites:
+        mask &= d["Location Name"].isin(C.location_names_for(sites))
+
     out = d[mask][["Employee Name", "Position Name", "Location Name",
                    "End Date", "Contract End Date", "Level"]]
+    if out.empty:
+        return kosong
     out.columns = ["Karyawan", "Position Name", "Site", "Resign Date",
                    "End Contract", "Level"]
     return out.sort_values(["Site", "Resign Date"])
-
-
-def department_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Ringkasan per site x departemen: pipeline, hire, dan yang sedang berjalan.
-
-    Kolom "Need" TIDAK ada di sini. Angka kebutuhan berasal dari weekly report,
-    dan portal belum menyambungnya — menampilkan kolom kosong bernama Need akan
-    lebih menyesatkan daripada tidak menampilkannya sama sekali.
-    """
-    d = df.copy()
-    d["_hire"] = d["status1"] == "CLOSE"
-    d["_open"] = d["status1"] == "OPEN"
-    d["_fail"] = d["status1"] == "FAILED"
-    g = d.groupby(["loc", "departement"]).agg(
-        kandidat=("cand_key", "size"),
-        hire=("_hire", "sum"),
-        berjalan=("_open", "sum"),
-        gagal=("_fail", "sum"),
-    ).reset_index()
-    g["hire_rate"] = (g["hire"] / g["kandidat"] * 100).round(1)
-    return g.sort_values(["loc", "kandidat"], ascending=[True, False])

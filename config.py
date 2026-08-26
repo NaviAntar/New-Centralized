@@ -131,6 +131,34 @@ SITES = {
     "SSCP": {"label": "SSCP", "icon": "🔧", "loc_values": ["SSCP"], "active": False},
 }
 
+# Nama lokasi di sheet "Update MPP" ditulis panjang, sementara database kandidat
+# memakai kode singkat. Peta ini menyatukan keduanya supaya filter site di Weekly
+# Report berlaku sama untuk panel kandidat maupun panel karyawan resign.
+SITE_LOCATION_NAMES = {
+    "HO": ["Jakarta", "Balikpapan"],
+    "BCP": ["Bengalon Coal Project"],
+    "KCP": ["Kintap Coal Project"],
+    "ACP": ["Asam-Asam Coal Project"],
+    "SSCP": ["Sebuku Sejaka Coal Project"],
+}
+
+
+def location_names_for(site_keys) -> list[str]:
+    """Nama lokasi panjang untuk sekumpulan kode site."""
+    out = []
+    for k in site_keys or []:
+        out.extend(SITE_LOCATION_NAMES.get(k, []))
+    return out
+
+
+def loc_values_for(site_keys) -> list[str]:
+    """Nilai kolom `loc` di database kandidat untuk sekumpulan kode site."""
+    out = []
+    for k in site_keys or []:
+        out.extend(v.upper() for v in SITES.get(k, {}).get("loc_values", []))
+    return out
+
+
 # Tiap site punya deployment Apps Script sendiri.
 #
 # HO memakai form baru (Staff). Empat site lain sementara memakai form Centralized
