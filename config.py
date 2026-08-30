@@ -347,6 +347,7 @@ RECRUITER_NAMES = {
     "DIV": "Alfina Diva Ramadhanty",
     "FLI": "Muhammad Rafli",
     "UMY": "Shaumy Fadhila",
+    "FAW": "Muhammad Faiq Kenzie Widodo",
 }
 
 # Tiga orang di roster belum punya inisial: Muhammad Faiq Kenzie Widodo,
@@ -371,7 +372,6 @@ RECRUITER_ROSTER = [
     "Muhammad Faiq Kenzie Widodo",
     "Shaumy Fadhila",
     "Tallita Ayu Salsabila",
-    "Fachry",
 ]
 
 # Inisial di luar roster digabung jadi satu baris dengan label ini (keputusan
