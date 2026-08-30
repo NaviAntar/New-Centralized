@@ -346,7 +346,7 @@ RECRUITER_NAMES = {
     "AWL": "Awaluddin",
     "DIV": "Alfina Diva Ramadhanty",
     "FLI": "Muhammad Rafli",
-    "SHA": "Shaumy Fadhila",
+    "UMY": "Shaumy Fadhila",
 }
 
 # Tiga orang di roster belum punya inisial: Muhammad Faiq Kenzie Widodo,
