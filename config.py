@@ -345,7 +345,7 @@ RECRUITER_NAMES = {
     "PURI": "Puranti Nurparida",
     "AWL": "Awaluddin",
     "DIV": "Alfina Diva Ramadhanty",
-    "PLI": "Muhammad Rafli",
+    "FLI": "Muhammad Rafli",
     "SHA": "Shaumy Fadhila",
 }
 
