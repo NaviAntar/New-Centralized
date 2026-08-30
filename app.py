@@ -53,6 +53,9 @@ def get_data():
     seluruh lead time dihitung dalam hari kerja terhadap kalender itu.
     """
     M.set_holidays(DL.load_holidays())
+    # Master posisi dipasang sebelum prepare(): kolom departemen di database
+    # sebagian terisi nama posisi dan diperbaiki lewat master ini.
+    M.set_position_master(DL.load_position_master())
     df = M.prepare(DL.load_candidates())
     sf = M.stage_frame(df)
     return df, sf, M.lead_time(df, sf)
@@ -250,9 +253,10 @@ def page_tracking_candidate():
 
     with st.container(key="filterbar_tc"):
         label = st.selectbox(
-            "Cari kandidat — ketik nama, posisi, departemen, atau site",
+            "Cari kandidat — ketik namanya",
             list(pilihan), key="tc_pick",
-            help="Ketik sebagian nama; daftar di bawah langsung menyusut.")
+            help="Daftar menyusut sambil diketik, tanpa perlu menekan apa pun. "
+                 "Keterangan lengkapnya muncul di bawah setelah dipilih.")
     pilih = pilihan[label]
 
     row = df[df["cand_key"] == pilih].iloc[0]
@@ -338,9 +342,10 @@ def page_tracking_position():
 
     with st.container(key="filterbar_tp"):
         label = st.selectbox(
-            "Cari posisi — ketik nama posisi, departemen, atau site",
+            "Cari posisi — ketik nama posisinya",
             list(pilihan), key="tp_pick",
-            help="Ketik mis. \"supervisor\"; daftar di bawah langsung menyusut.")
+            help="Daftar menyusut sambil diketik, tanpa perlu menekan apa pun. "
+                 "Keterangan lengkapnya muncul di bawah setelah dipilih.")
     posisi, loc = pilihan[label]
 
     kand = M.position_candidates(df, lt, posisi, loc)
@@ -374,7 +379,8 @@ def page_tracking_position():
               theme.esc(r.last_progress),
               n(r.total_lt) if pd.notna(r.total_lt) else "—",
               theme.result_pill(r.status1)]
-             for r in kand.itertuples()], align="llllllrl"), unsafe_allow_html=True)
+             for r in kand.itertuples()], align="llllllrl", max_rows=10),
+            unsafe_allow_html=True)
 
 
 # ===========================================================================
@@ -445,8 +451,9 @@ def page_weekly():
             "rata-rata antar tahap dijumlahkan — <b>seluruh tahap proses ikut</b>, termasuk "
             "One Month Notice yang budget-nya 30 hari. Karena itu SLA Budget di sini sejalan "
             "dengan target 60+ hari di matriks Backend. <b>Achievement</b> = Budget ÷ Actual; "
-            "di atas 100% berarti lebih cepat dari target. Kolom <b>Onboarding</b> tidak bisa "
-            "dijumlahkan ke bawah — satu kandidat dikreditkan ke semua PIC yang menanganinya.",
+            "di atas 100% berarti lebih cepat dari target. <b>Kandidat</b> dan <b>Onboarding</b> "
+            "dihitung dari PIC Screening CV saja, jadi satu kandidat hanya masuk ke satu nama "
+            "dan kolomnya boleh dijumlahkan ke bawah.",
             block=True), unsafe_allow_html=True)
 
     # ── New Hire ───────────────────────────────────────────────────────────
@@ -462,7 +469,8 @@ def page_weekly():
             kolom = list(nh.columns)
             isi = [[theme.esc(r[0])] + [n(v) for v in r[1:]] for r in nh.values.tolist()]
             st.markdown(theme.data_table(kolom, isi[:-1], total_row=isi[-1],
-                                         align="l" + "r" * (len(kolom) - 1)),
+                                         align="l" + "r" * (len(kolom) - 1),
+                                         max_rows=10),
                         unsafe_allow_html=True)
 
     # ── Ringkasan per site ─────────────────────────────────────────────────
@@ -478,7 +486,8 @@ def page_weekly():
             kolom = list(sm.columns)
             isi = [[theme.esc(r[0])] + [n(v) for v in r[1:]] for r in sm.values.tolist()]
             st.markdown(theme.data_table(kolom, isi[:-1], total_row=isi[-1],
-                                         align="l" + "r" * (len(kolom) - 1)),
+                                         align="l" + "r" * (len(kolom) - 1),
+                                         max_rows=10),
                         unsafe_allow_html=True)
 
     # ── On Progress ────────────────────────────────────────────────────────
@@ -497,7 +506,8 @@ def page_weekly():
                     ["Kandidat", "Posisi", "Site", "Tanggal"],
                     [[theme.esc(r.candidate_id), theme.esc(r.position_name), theme.esc(r.loc),
                       theme.esc(r.tanggal.date() if pd.notna(r.tanggal) else None)]
-                     for r in sel.itertuples()], align="llll"), unsafe_allow_html=True)
+                     for r in sel.itertuples()], align="llll", max_rows=10),
+                    unsafe_allow_html=True)
 
     # ── Karyawan resign ────────────────────────────────────────────────────
     st.markdown(theme.section_heading(
@@ -524,7 +534,7 @@ def page_weekly():
                       theme.esc(r[4].date() if pd.notna(r[4]) else None),
                       theme.esc(r[5].date() if pd.notna(r[5]) else None),
                       n(r[6])] for r in res.itertuples()],
-                    align="lllllr"), unsafe_allow_html=True)
+                    align="lllllr", max_rows=10), unsafe_allow_html=True)
 
 
 # ===========================================================================

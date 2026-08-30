@@ -151,3 +151,55 @@ def load_mpp(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
         ("gviz by nama tab", C.gsheet_csv_url(C.REPORT_SHEET_MPP, C.REPORT_SPREADSHEET_ID)),
     ])
     return df
+
+
+def load_position_master(source: str | pd.DataFrame | None = None) -> dict[str, dict]:
+    """Master posisi dari Monitoring 2026 > "MPP 2026".
+
+    Dipakai memperbaiki kolom `departement` di database kandidat: sebagian baris
+    terisi NAMA POSISI ("Foreman - DMS Operation") alih-alih departemen.
+
+    Mengembalikan dua peta: berdasarkan Position ID dan berdasarkan nama posisi.
+    Kalau sheet tidak terbaca, kembalikan peta kosong — perbaikan dilewati, bukan
+    membuat aplikasi gagal.
+    """
+    kosong = {"by_id": {}, "by_name": {}, "valid": set()}
+    try:
+        if isinstance(source, pd.DataFrame):
+            df = source
+        else:
+            # gid lebih dulu: endpoint gviz memotong sheet ini di baris ke-4.
+            df, _ = _try_sources([
+                ("argumen langsung", source or ""),
+                ("env MPP2026_CSV", os.environ.get("MPP2026_CSV", "")),
+                ("export by gid", C.gsheet_gid_url(
+                    C.MONITORING_GID_MPP, C.MONITORING_SPREADSHEET_ID)),
+                ("gviz by nama tab", C.gsheet_csv_url(
+                    C.MONITORING_SHEET_MPP, C.MONITORING_SPREADSHEET_ID)),
+            ])
+        df.columns = [str(c).strip() for c in df.columns]
+        if not {"Position", "PositionID", "Departement"} <= set(df.columns):
+            return kosong
+
+        if getattr(C, "MPP_HEADER_SWAPPED", False):
+            # Judul tertukar dengan isinya: kolom "Position" berisi kode,
+            # kolom "PositionID" berisi nama posisi.
+            kode, nama = df["Position"], df["PositionID"]
+        else:
+            kode, nama = df["PositionID"], df["Position"]
+        kode = kode.astype(str).str.strip()
+        nama = nama.astype(str).str.strip()
+        dept = df["Departement"].astype(str).str.strip()
+
+        ok = dept.notna() & ~dept.isin(["", "nan", "None", "-"])
+        if ok.sum() < 20:
+            # Ambilan terpotong / sheet sedang dirapikan — lebih baik tidak
+            # dipakai sama sekali daripada dipercaya setengah-setengah.
+            return kosong
+        return {
+            "by_id": dict(zip(kode[ok], dept[ok])),
+            "by_name": dict(zip(nama[ok], dept[ok])),
+            "valid": set(dept[ok]),
+        }
+    except Exception:
+        return kosong

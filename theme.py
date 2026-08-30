@@ -1753,6 +1753,11 @@ STAGE_CSS = f"""
 .dh-table.dh-portal td.dh-r, .dh-table.dh-portal th.dh-r {{ text-align:right; }}
 .dh-table.dh-portal td:first-child {{ font-weight:600; }}
 .dh-tablewrap {{ overflow-x:auto; }}
+/* Header ikut menempel saat isi tabel digulir, supaya nama kolom tidak hilang. */
+.dh-table.dh-portal thead th {{ position:sticky; top:0; z-index:2; }}
+.dh-tablefoot {{
+  font-size:11px; color:{NEUTRAL["text_soft"]}; padding:7px 2px 0; font-weight:600;
+}}
 
 /* Tabel tahap: kolom keterangan rata kiri, kolom angka rata kanan. Tanpa ini
    nama tahap ikut rata kanan karena aturan warisan .dh-table. */
@@ -1869,7 +1874,7 @@ div[class*="st-key-filterbar"] {{
 
 
 def data_table(headers: list[str], rows: list[list], align: str | None = None,
-               total_row: list | None = None) -> str:
+               total_row: list | None = None, max_rows: int | None = None) -> str:
     """Tabel portal dengan perataan kolom yang ditentukan pemanggil.
 
     `align` = string kode per kolom: "l" rata kiri, "r" rata kanan.
@@ -1897,9 +1902,20 @@ def data_table(headers: list[str], rows: list[list], align: str | None = None,
     if total_row:
         tot = ('<tr class="tr-total">' + "".join(
             f'<td class="{cls(i)}">{v}</td>' for i, v in enumerate(total_row)) + "</tr>")
-    return (f'<div class="dh-tablewrap"><table class="dh-table dh-portal">'
+    # max_rows membatasi TINGGI tampilan, bukan isinya: seluruh baris tetap ada
+    # dan bisa digulir di dalam kotak. Tabel On Progress bisa berisi 200 baris —
+    # tanpa batas ini satu panel saja mendorong bagian lain jauh ke bawah layar.
+    gaya = ""
+    kaki = ""
+    if max_rows and len(rows) > max_rows:
+        tinggi = 38 + max_rows * 37
+        gaya = f' style="max-height:{tinggi}px;overflow-y:auto"'
+        kaki = (f'<div class="dh-tablefoot">Menampilkan {max_rows} dari '
+                f"{len(rows)} baris — gulir di dalam tabel untuk melihat sisanya</div>")
+
+    return (f'<div class="dh-tablewrap"{gaya}><table class="dh-table dh-portal">'
             f"<thead><tr>{thead}</tr></thead><tbody>{''.join(body)}{tot}</tbody>"
-            f"</table></div>")
+            f"</table></div>{kaki}")
 
 
 def inject_portal_css():

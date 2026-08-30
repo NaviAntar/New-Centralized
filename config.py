@@ -343,23 +343,58 @@ def applicable_stages(level: str) -> list[str]:
 # st.session_state dan langsung terpakai tanpa restart.
 RECRUITER_NAMES = {
     "PURI": "Puranti Nurparida",
+    "PUR": "Puranti Nurparida",                   # varian lama di sebagian baris
+    "PURANTI NURPARIDA": "Puranti Nurparida",     # sebagian baris sudah nama penuh
     "AWL": "Awaluddin",
     "DIV": "Alfina Diva Ramadhanty",
     "FLI": "Muhammad Rafli",
     "UMY": "Shaumy Fadhila",
-    "FAW": "Muhammad Faiq Kenzie Widodo",
+    "SHA": "Shaumy Fadhila",                      # varian lama
+    # Di database tertulis FAQ, bukan FAW — itu sebabnya barisnya kosong.
+    "FAQ": "Muhammad Faiq Kenzie Widodo",
+    "MUHAMMAD FAIQ KENZIE WIDODO": "Muhammad Faiq Kenzie Widodo",
 }
 
-# Tiga orang di roster belum punya inisial: Muhammad Faiq Kenzie Widodo,
-# Tallita Ayu Salsabila, dan Fachry. Selama belum dipetakan, mereka tampil di
-# tabel dengan nilai nol — BUKAN mengambil data orang lain.
+
+def is_valid_initial(value) -> bool:
+    """False untuk nilai yang jelas bukan inisial recruiter.
+
+    Kolom PIC di database sempat kemasukan angka serial tanggal Excel
+    (46205, 46216, …) dari salah tempel. Tanpa saringan ini, angka-angka itu
+    muncul sebagai "recruiter" baru di tabel Performance.
+    """
+    s = str(value or "").strip()
+    if not s or s.lower() in ("nan", "none", "-"):
+        return False
+    return not s.replace(".", "").replace(",", "").isdigit()
+
+# Tallita Ayu Salsabila belum punya inisial apa pun di database — barisnya nol
+# karena datanya memang belum ada, bukan karena salah pemetaan.
 #
-# Inisial yang masih menganggur di database dan menunggu dipetakan:
-#   AIC (550 aktivitas) · FLI (175) · BEL (112) · SOM (62) · JAZ (42)
-#   MEI (5) · ADR (1)
-# Inisial dengan volume besar yang sudah diketahui BUKAN milik roster:
-#   RAF = Rafi'ud A · MRB = M. Ribi H · NAV = Navi A · IRV = Irviyani
-UNMAPPED_INITIALS_HINT = ["AIC", "FLI", "BEL", "SOM", "JAZ", "MEI", "ADR"]
+# Inisial yang masih menganggur (hitungan data live 27 Agt):
+#   AIC (548 aktivitas) · BEL (109) · JAZ (42) · ALD (19) · MEI (5) · SOM (1)
+# Inisial besar yang sudah diketahui BUKAN milik roster:
+#   RAF = Rafi'ud A · MRB = M. Ribi H · NAV / NAVI ANTAR = Navi A · IRV = Irviyani
+UNMAPPED_INITIALS_HINT = ["AIC", "BEL", "JAZ", "ALD", "MEI", "SOM"]
+
+# Master posisi -> departemen, dipakai memperbaiki kolom `departement` di
+# database kandidat yang sebagian terisi NAMA POSISI, bukan departemen.
+MONITORING_SHEET_MPP = "MPP 2026"
+
+# Endpoint gviz (by nama tab) memotong sheet ini di baris ke-4 — kemungkinan
+# karena filter view / baris beku. Endpoint export by gid mengembalikan 771
+# baris utuh, jadi gid dipakai lebih dulu dan gviz hanya cadangan.
+MONITORING_GID_MPP = "354501614"
+
+# Di sheet MPP 2026 judul kolom "Position" dan "PositionID" tertukar dengan
+# isinya: kolom berjudul "Position" berisi KODE posisi, yang berjudul
+# "PositionID" berisi NAMA posisi. Ditukar balik saat dibaca.
+MPP_HEADER_SWAPPED = True
+
+# Label untuk baris yang departemennya tidak bisa dipastikan dari master mana
+# pun. Sengaja satu baris gabungan — lebih jujur daripada membiarkan nama posisi
+# menyamar jadi departemen.
+DEPT_UNMAPPED_LABEL = "Belum diisi di sumber"
 
 # Nama yang tampil sebagai baris tersendiri di tabel Performance, sesuai urutan
 # yang Navi berikan. Nama tanpa inisial tetap muncul (nilai nol) supaya terlihat

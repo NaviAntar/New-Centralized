@@ -281,24 +281,67 @@ tim di sheet ONP dan Karyawan Resign, bukan tafsiran sendiri:
 Panel resign diverifikasi terhadap sheet: **18 dari 18 nama cocok persis** untuk
 Agustus 2026.
 
-Kolom **Onboarding** tidak bisa dijumlahkan ke bawah: satu kandidat ditangani
-beberapa PIC dan masing-masing mendapat kreditnya (keputusan Navi), jadi
-jumlahnya lebih besar dari hire sebenarnya. Kolom **Kandidat** disertakan supaya
-Achievement bisa dibaca adil — orang yang hanya memegang screening wajar punya
-angka jauh lebih tinggi daripada yang memegang offering sampai MCU.
+Kolom **Kandidat** dan **Onboarding** dihitung dari **PIC Screening CV saja**,
+sesuai permintaan Navi: satu kandidat hanya dikreditkan ke satu orang, jadi kedua
+kolom itu boleh dijumlahkan ke bawah tanpa dobel. SLA-nya tetap dihitung dari
+seluruh tahap yang orang itu tangani — dua ukuran yang beda dasar, dan memang
+sengaja.
 
 Sheet **Summary** belum punya kolom Need. Angka kebutuhan berasal dari weekly
 report dan portal belum menyambungnya; menampilkan kolom kosong bernama Need
 akan lebih menyesatkan daripada tidak menampilkannya.
 
-**Tracking Kandidat & Tracking Posisi.** Keduanya memakai satu kotak saja.
-`st.selectbox` punya pencarian bawaan: ketik "tika clara" dan daftar di bawah
-kotak langsung menyusut, tiap barisnya bertuliskan *nama · posisi · departemen ·
-site*. Tidak ada lagi kotak cari terpisah lalu dropdown lagi.
+**Tracking Kandidat & Tracking Posisi.** Keduanya memakai satu kotak saja, dan
+daftarnya menyusut **sambil diketik** — tidak perlu menekan tombol apa pun.
 
-Karena label pencocokannya memuat seluruh keterangan itu, mengetik "supervisor"
-atau "BCP" sama-sama menyaring — bukan hanya nama.
+Yang dicocokkan hanya **nama** (di Tracking Kandidat) atau **nama posisi** (di
+Tracking Posisi). Keterangan lain — posisi, departemen, level, site — muncul di
+bawah setelah dipilih, bukan ikut jadi bahan pencarian. Kalau labelnya memuat
+semua keterangan itu, mengetik "tika" ikut memunculkan orang yang cuma kebetulan
+departemennya mengandung "tika".
+
+Nama yang kembar diberi pembeda seperlunya: nama posisi dulu, dan site hanya
+kalau posisinya pun sama.
 
 Tracking Posisi langsung menampilkan detail posisi yang dipilih; tabel hasil
 pencarian sudah dihapus. Kolom kandidatnya: nama, posisi, departemen, level,
 loc, last progress, total LT, dan status.
+
+**Panjang tabel.** New Hire, Ringkasan per site, On Progress, Karyawan resign,
+dan daftar kandidat per posisi dibatasi **10 baris terlihat**; sisanya digulir
+di dalam kotak tabel dengan header yang tetap menempel. Tanpa batas ini satu
+panel On Progress berisi 200 baris mendorong seluruh bagian lain jauh ke bawah.
+
+**Site kosong.** Kandidat yang kolom `loc`-nya tidak terisi dimasukkan ke
+**BPN**, bukan ditampilkan sebagai baris "(tanpa site)".
+
+
+**Departemen yang terisi nama posisi.** Sebagian baris database mengisi kolom
+`departement` dengan nama posisi ("Foreman - DMS Operation"), sehingga New Hire
+dulu memunculkan nama posisi seolah-olah departemen. Portal memperbaikinya lewat
+master `Monitoring 2026 › MPP 2026` (660 Position ID, 685 nama posisi, 56
+departemen sah), dengan urutan: nilai yang memang departemen dipakai apa adanya →
+cari lewat Position ID → cari lewat nama posisi → contek baris lain dengan posisi
+sama → sisanya dikumpulkan ke satu baris "Belum diisi di sumber".
+
+Dua jebakan yang sudah ditutup:
+
+* Endpoint **gviz by nama tab** memotong sheet MPP 2026 di **baris ke-4**. Portal
+  memakai `export?format=csv&gid=354501614` lebih dulu dan gviz hanya cadangan.
+  Kalau master terbaca kurang dari 20 departemen, master itu **tidak dipakai sama
+  sekali** — lebih baik jatuh ke acuan cadangan daripada menganggap semua
+  departemen asli tidak sah dan meruntuhkan laporan jadi satu baris.
+* Di sheet MPP 2026 judul kolom **"Position" dan "PositionID" tertukar dengan
+  isinya** (yang berjudul Position berisi kode, yang berjudul PositionID berisi
+  nama). Portal menukarnya balik saat membaca; kalau nanti sheetnya diperbaiki,
+  ubah `MPP_HEADER_SWAPPED = False` di `config.py`.
+
+Sisanya, **711 baris** memang belum bisa dipetakan, dan itu perkara data bukan
+kode: 566 baris kolom departemennya kosong di sumber, sisanya memakai posisi yang
+belum ada di MPP 2026 (rata-rata posisi baru berkode 11 digit seperti
+`E26E0200002`, `P26P0470002` — SSCP). Di New Hire hanya 50 dari 414 yang jatuh ke
+"Belum diisi di sumber".
+
+**Tanggal di sheet Update MPP** ditulis hari-dulu (`03/01/2026` = 3 Januari).
+Dibaca dengan format eksplisit `%d/%m/%Y`, bukan tebakan pandas — kalau tidak,
+tanggal 1–12 berisiko terbalik jadi bulan dan daftar resign salah periode.

@@ -136,7 +136,68 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
         )
 
     df["level"] = df.get("level").fillna(C.LEVEL_FALLBACK) if "level" in df.columns else C.LEVEL_FALLBACK
+
+    # Kolom departemen dibereskan di satu tempat, sebelum dipakai halaman mana
+    # pun — kalau tidak, tiap laporan harus mengulang perbaikan yang sama.
+    if "departement" in df.columns:
+        df["departement"] = repair_department(df)
     return df
+
+
+_POSITION_MASTER: dict = {"by_id": {}, "by_name": {}, "valid": set()}
+
+
+def set_position_master(master: dict | None) -> None:
+    """Pasang master posisi -> departemen. Panggil sekali saat startup."""
+    global _POSITION_MASTER
+    _POSITION_MASTER = master or {"by_id": {}, "by_name": {}, "valid": set()}
+
+
+def repair_department(df: pd.DataFrame) -> pd.Series:
+    """Kolom departemen yang sudah dibersihkan.
+
+    Sebagian baris di database mengisi kolom `departement` dengan NAMA POSISI —
+    "Foreman - DMS Operation", "Supervisor - HV Electrical", dan sejenisnya —
+    sehingga di laporan New Hire nama posisi muncul seolah-olah departemen.
+
+    Urutan penyelamatannya:
+      1. Nilai yang memang ada di daftar departemen resmi dipakai apa adanya.
+      2. Kalau tidak, cari departemen lewat Position ID di master MPP 2026.
+      3. Kalau tidak ketemu, cari lewat nama posisi.
+      4. Kalau tetap tidak ketemu, cari posisi yang sama di baris lain database
+         yang departemennya sudah benar.
+      5. Sisanya dikumpulkan ke satu baris berlabel jelas — BUKAN dibiarkan
+         tampil sebagai departemen palsu.
+    """
+    dept = df["departement"].astype(str).str.strip().replace({"nan": None, "": None})
+    valid = set(_POSITION_MASTER.get("valid") or set())
+    if len(valid) < 20:
+        # Master gagal diambil atau cuma terbaca sepotong — kalau tetap dipakai,
+        # SEMUA departemen asli ikut dianggap tidak sah dan laporan New Hire
+        # runtuh jadi satu baris. Acuan cadangannya: nilai yang paling sering
+        # dipakai di database itu sendiri.
+        valid |= set(dept.value_counts()[lambda s: s >= 3].index)
+
+    sah = dept.isin(valid)
+    hasil = dept.where(sah)
+
+    pid = df.get("position_id", pd.Series(index=df.index, dtype=object))
+    pnm = df.get("position_name", pd.Series(index=df.index, dtype=object))
+    pid = pid.astype(str).str.strip()
+    pnm = pnm.astype(str).str.strip()
+
+    hasil = hasil.fillna(pid.map(_POSITION_MASTER.get("by_id", {})))
+    hasil = hasil.fillna(pnm.map(_POSITION_MASTER.get("by_name", {})))
+
+    # Posisi yang sama, tapi departemennya benar di baris lain.
+    benar = df[sah]
+    if len(benar):
+        peta = (benar.assign(_p=pid[sah])
+                     .groupby("_p")["departement"]
+                     .agg(lambda s: s.mode().iat[0] if len(s.mode()) else None))
+        hasil = hasil.fillna(pid.map(peta))
+
+    return hasil.fillna(C.DEPT_UNMAPPED_LABEL)
 
 
 _HOLIDAYS: "np.ndarray | None" = None
@@ -235,7 +296,10 @@ def stage_frame(df: pd.DataFrame) -> pd.DataFrame:
 
         pic_col = C.STAGE_PIC_COLUMN.get(stage)
         if pic_col and pic_col in df.columns:
-            block["pic_initial"] = df[pic_col].astype(str).str.strip().str.upper().replace({"NAN": None, "": None})
+            pic = df[pic_col].astype(str).str.strip().str.upper()
+            # Angka serial tanggal Excel yang salah tempel dibuang di sini,
+            # supaya tidak muncul sebagai recruiter baru di tabel Performance.
+            block["pic_initial"] = pic.where(pic.map(C.is_valid_initial))
         else:
             block["pic_initial"] = None
 
@@ -401,6 +465,25 @@ def recruiter_owned(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.DataF
     return pic.drop_duplicates(["cand_key", "name"])
 
 
+def _screening_owner(sf: pd.DataFrame, extra_map, date_from, date_to, sites) -> pd.DataFrame:
+    """Kandidat beserta PIC Screening CV-nya — dasar hitungan Kandidat & Onboarding.
+
+    Screening CV dipilih sebagai penentu kepemilikan karena itu pintu masuk
+    kandidat: tiap kandidat punya tepat satu PIC screening, jadi tidak ada yang
+    terhitung dua kali.
+    """
+    scr = sf[(sf["stage"] == "Screening CV") & sf["pic_initial"].notna()].copy()
+    if date_from is not None:
+        scr = scr[scr["screening_date"] >= pd.Timestamp(date_from)]
+    if date_to is not None:
+        scr = scr[scr["screening_date"] <= pd.Timestamp(date_to)]
+    if sites:
+        scr = scr[scr["loc"].isin(C.loc_values_for(sites))]
+    scr["name"] = scr["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
+    scr["name"] = scr["name"].fillna(C.OTHER_RECRUITER_LABEL)
+    return scr.drop_duplicates(["cand_key", "name"])
+
+
 def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
                           extra_map: dict | None = None, sites=None) -> pd.DataFrame:
     """Tabel performance per recruiter.
@@ -454,9 +537,17 @@ def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
             sla_budget=("budget", "sum"),
             stages=("stage", "nunique"),
         )
-        g["candidates"] = milik.groupby("name")["cand_key"].nunique()
-        hire = semua[semua["status1"] == "CLOSE"]
-        g["onboarding"] = hire.groupby("name")["cand_key"].nunique()
+
+        # Kandidat dan Onboarding dihitung dari PIC SCREENING CV saja, bukan dari
+        # semua tahap. Satu kandidat ditangani beberapa orang, jadi menghitung
+        # lewat semua PIC membuat satu orang yang sama terhitung di beberapa
+        # baris sekaligus dan jumlah kolomnya jauh melampaui hire sebenarnya.
+        # Dengan bertumpu pada screening — pintu masuk kandidat — tiap kandidat
+        # hanya dikreditkan sekali (keputusan Navi).
+        pemilik = _screening_owner(sf, extra_map, date_from, date_to, sites)
+        g["candidates"] = pemilik.groupby("name")["cand_key"].nunique()
+        g["onboarding"] = (pemilik[pemilik["status1"] == "CLOSE"]
+                           .groupby("name")["cand_key"].nunique())
         g["achievement"] = (g["sla_budget"] / g["sla_actual"] * 100).where(g["sla_actual"] > 0)
 
     # Roster selalu tampil lengkap, termasuk orang yang belum punya data —
@@ -571,7 +662,9 @@ def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
     if h.empty:
         return pd.DataFrame()
 
-    h["_dept"] = h["departement"].fillna("(tanpa departemen)")
+    h["_dept"] = (h["departement"].astype(str).str.strip()
+                  .replace({"": None, "nan": None, "None": None})
+                  .fillna(C.DEPT_UNMAPPED_LABEL))
     kolom = _periode_kolom(periods)
 
     hasil = {}
@@ -604,7 +697,11 @@ def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
     if h.empty:
         return pd.DataFrame()
 
-    h["_site"] = h["loc"].fillna("(tanpa site)")
+    # Baris tanpa kode site itu Balikpapan yang tidak terisi saat input
+    # (arahan Navi), jadi dimasukkan ke BPN alih-alih jadi baris "(tanpa site)".
+    h["_site"] = (h["loc"].astype(str).str.strip()
+                  .replace({"": None, "nan": None, "None": None})
+                  .fillna("BPN"))
     kolom = _periode_kolom(periods)
 
     hasil = {}
@@ -625,26 +722,33 @@ def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
 # Tracking Posisi
 # ===========================================================================
 def candidate_options(df: pd.DataFrame) -> dict[str, str]:
-    """Label pencarian -> cand_key, untuk selectbox Tracking Kandidat.
+    """Label pencarian -> cand_key, untuk kotak pencarian Tracking Kandidat.
 
-    Labelnya memuat nama, posisi, departemen, dan site sekaligus. Karena
-    st.selectbox mencocokkan ketikan ke seluruh isi label, mengetik "tika",
-    "supervisor", atau "BCP" sama-sama menyaring daftarnya.
+    Labelnya sengaja hanya berisi NAMA. st.selectbox mencocokkan ketikan ke isi
+    label, jadi label yang memuat posisi dan departemen membuat mengetik "tika"
+    ikut memunculkan orang yang cuma kebetulan departemennya mengandung "tika".
+    Keterangan lain ditampilkan di bawah kotak setelah kandidatnya dipilih.
+
+    Nama yang kembar diberi pembeda seperlunya — nama posisi, bukan Position ID.
     """
-    d = df.sort_values("candidate_id")
-    label = (d["candidate_id"].astype(str) + "  ·  "
-             + d["position_name"].fillna("(tanpa posisi)").astype(str) + "  ·  "
-             + d["departement"].fillna("—").astype(str) + "  ·  "
-             + d["loc"].fillna("—").astype(str))
+    d = df.sort_values("candidate_id").copy()
+    nama = d["candidate_id"].astype(str)
+    kembar = nama.duplicated(keep=False)
+    label = nama.where(~kembar,
+                       nama + "  ·  " + d["position_name"].fillna("—").astype(str))
+
+    # Kalau setelah diberi nama posisi pun masih kembar, tambahkan site.
+    masih = label.duplicated(keep=False)
+    label = label.where(~masih, label + "  ·  " + d["loc"].fillna("—").astype(str))
     return dict(zip(label, d["cand_key"]))
 
 
 def position_options(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
-    """Label pencarian -> (nama posisi, site), untuk selectbox Tracking Posisi.
+    """Label pencarian -> (nama posisi, site), untuk kotak Tracking Posisi.
 
-    Satu posisi bisa ada di beberapa site, jadi site ikut jadi bagian kunci —
-    bukan navigasi terpisah. Mengetik "supervisor" langsung memunculkan semua
-    Supervisor beserta site masing-masing dalam satu daftar.
+    Sama seperti candidate_options: yang dicocokkan hanya NAMA POSISI. Site ikut
+    ditulis hanya kalau posisi yang sama ada di lebih dari satu site — di situ
+    site memang jadi pembeda, bukan sekadar keterangan tambahan.
     """
     d = df[df["position_name"].notna()].copy()
     if d.empty:
@@ -653,9 +757,10 @@ def position_options(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
            .agg(departement=("departement", "first"), kandidat=("cand_key", "nunique"))
            .reset_index()
            .sort_values(["position_name", "loc"]))
-    label = (g["position_name"].astype(str) + "  ·  " + g["loc"].fillna("—").astype(str)
-             + "  ·  " + g["departement"].fillna("—").astype(str)
-             + "  ·  " + g["kandidat"].astype(str) + " kandidat")
+
+    posisi = g["position_name"].astype(str)
+    kembar = posisi.duplicated(keep=False)
+    label = posisi.where(~kembar, posisi + "  ·  " + g["loc"].fillna("—").astype(str))
     return dict(zip(label, zip(g["position_name"], g["loc"])))
 
 
@@ -771,6 +876,22 @@ def on_progress(df: pd.DataFrame, periods=None, sites=None) -> dict[str, pd.Data
     return {"Offering": offering, "MCU": mcu, "Onboarding": onboard}
 
 
+def _tanggal_mpp(s) -> pd.Series:
+    """Tanggal di sheet Update MPP ditulis hari-dulu: 03/01/2026 = 3 Januari.
+
+    Kalau dibaca dengan tebakan bawaan pandas, tanggal 1-12 terbalik jadi bulan
+    dan daftar resign ikut salah bulan. Format eksplisit dulu; sisa nilai yang
+    tidak cocok (misal sudah berupa ISO) baru ditebak.
+    """
+    s = pd.Series(s)
+    teks = s.astype(str).str.strip()
+    hasil = pd.to_datetime(teks, format="%d/%m/%Y", errors="coerce")
+    sisa = hasil.isna() & teks.ne("") & ~teks.isin(["nan", "None", "NaT", "-"])
+    if sisa.any():
+        hasil[sisa] = pd.to_datetime(teks[sisa], errors="coerce", dayfirst=True)
+    return hasil
+
+
 def resign(mpp: pd.DataFrame, periods=None, sites=None) -> pd.DataFrame:
     """Karyawan resign — replikasi rumus sheet "Karyawan Resign".
 
@@ -793,7 +914,7 @@ def resign(mpp: pd.DataFrame, periods=None, sites=None) -> pd.DataFrame:
     d = mpp.copy()
     d.columns = [str(c).strip() for c in d.columns]
     for c in ("End Date", "Contract End Date"):
-        d[c] = pd.to_datetime(d.get(c), errors="coerce")
+        d[c] = _tanggal_mpp(d.get(c))
     d["Level"] = pd.to_numeric(d.get("Level"), errors="coerce")
 
     if periods:
