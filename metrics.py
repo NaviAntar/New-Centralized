@@ -105,6 +105,12 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].astype(str).str.strip().replace({"nan": None, "": None})
 
+    # Identitas ditambal SEBELUM apa pun dihitung: di fix_centralized kolom
+    # position_name / departement / level / loc adalah lookup yang belum ditarik
+    # ke bawah untuk baris baru. Kalau dibiarkan, kandidat SSCP tercatat tanpa
+    # site (dan dulu ikut terhitung sebagai BPN) dan tanpa departemen.
+    df = _tambal_identitas(df)
+
     if "loc" in df.columns:
         df["loc"] = df["loc"].str.upper()
     if "status1" in df.columns:
@@ -141,6 +147,53 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
     # pun — kalau tidak, tiap laporan harus mengulang perbaikan yang sama.
     if "departement" in df.columns:
         df["departement"] = repair_department(df)
+    return df
+
+
+_ROW_MASTER: dict = {}
+_TAMBAL_KOLOM = ("position_name", "departement", "level", "loc")
+
+
+def set_row_master(bm: "pd.DataFrame | None") -> None:
+    """Pasang sheet Backend Monitoring sebagai penambal identitas kandidat.
+
+    Dipanggil sekali sebelum prepare(). Kuncinya nama + Position ID, sama dengan
+    cand_key, supaya orang yang melamar dua posisi tidak tertukar.
+    """
+    global _ROW_MASTER
+    _ROW_MASTER = {}
+    if bm is None or getattr(bm, "empty", True):
+        return
+    for kol in ("candidate_id", "position_id"):
+        if kol not in bm.columns:
+            return
+    d = bm.copy()
+    d["_k"] = (d["candidate_id"].astype(str).str.strip().str.upper() + " | "
+               + d["position_id"].astype(str).str.strip().str.upper())
+    d = d.drop_duplicates("_k", keep="last").set_index("_k")
+    ada = [c for c in _TAMBAL_KOLOM if c in d.columns]
+    _ROW_MASTER = d[ada].to_dict("index")
+
+
+def _tambal_identitas(df: pd.DataFrame) -> pd.DataFrame:
+    """Isi position_name / departement / level / loc yang kosong dari sheet
+    Backend Monitoring. Nilai yang sudah ada di fix_centralized tidak disentuh —
+    penambalan ini hanya mengisi lubang, bukan menimpa.
+    """
+    if not _ROW_MASTER or "position_id" not in df.columns:
+        return df
+    kunci = (df["candidate_id"].astype(str).str.strip().str.upper() + " | "
+             + df["position_id"].astype(str).str.strip().str.upper())
+    for kol in _TAMBAL_KOLOM:
+        if kol not in df.columns:
+            continue
+        kosong = df[kol].isna() | df[kol].astype(str).str.strip().isin(
+            ["", "nan", "None", "-"])
+        if not kosong.any():
+            continue
+        isi = kunci[kosong].map(
+            lambda k: (_ROW_MASTER.get(k) or {}).get(kol))
+        df.loc[kosong, kol] = isi
     return df
 
 
@@ -186,6 +239,15 @@ def repair_department(df: pd.DataFrame) -> pd.Series:
     pid = pid.astype(str).str.strip()
     pnm = pnm.astype(str).str.strip()
 
+    # Sheet Backend Monitoring lebih dulu: itu departemen yang tim lihat sendiri
+    # di dashboard monitoring, jadi paling tepat untuk baris yang di
+    # fix_centralized malah terisi nama posisi.
+    if _ROW_MASTER:
+        kunci = (df["candidate_id"].astype(str).str.strip().str.upper()
+                 + " | " + pid.str.upper())
+        hasil = hasil.fillna(kunci.map(
+            lambda k: (_ROW_MASTER.get(k) or {}).get("departement")))
+
     hasil = hasil.fillna(pid.map(_POSITION_MASTER.get("by_id", {})))
     hasil = hasil.fillna(pnm.map(_POSITION_MASTER.get("by_name", {})))
 
@@ -197,6 +259,9 @@ def repair_department(df: pd.DataFrame) -> pd.Series:
                      .agg(lambda s: s.mode().iat[0] if len(s.mode()) else None))
         hasil = hasil.fillna(pid.map(peta))
 
+    # Satu departemen yang ditulis dengan beberapa ejaan disatukan paling akhir,
+    # supaya tidak muncul dua baris untuk departemen yang sama.
+    hasil = hasil.replace(getattr(C, "DEPT_ALIASES", {}))
     return hasil.fillna(C.DEPT_UNMAPPED_LABEL)
 
 

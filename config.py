@@ -38,6 +38,13 @@ REPORT_SHEET_NEWHIRE = "New Hire"
 REPORT_SHEET_ONP = "ONP"
 REPORT_SHEET_MPP = "Update MPP"      # daftar karyawan — sumber panel resign
 
+# Sheet "Backend Monitoring" (gid 0) di spreadsheet Report. Isinya kandidat yang
+# sama dengan fix_centralized, tapi kolom POSITION NAME / LEVEL / DEPARTMENT /
+# LOC-nya sudah terisi untuk baris baru — di fix_centralized kolom itu lookup
+# yang belum ditarik ke bawah. Dipakai menambal identitas kandidat saja.
+REPORT_GID_BACKEND = "0"
+REPORT_SHEET_BACKEND = "Backend Monitoring"
+
 CACHE_TTL_SECONDS = 60
 
 
@@ -395,6 +402,23 @@ MPP_HEADER_SWAPPED = True
 # pun. Sengaja satu baris gabungan — lebih jujur daripada membiarkan nama posisi
 # menyamar jadi departemen.
 DEPT_UNMAPPED_LABEL = "Belum diisi di sumber"
+
+# Satu departemen, beberapa ejaan. Tanpa ini New Hire menampilkan dua baris HSE
+# yang sebenarnya departemen yang sama — ejaannya beda antar sheet:
+# fix_centralized & MPP 2026 menulis "Environent", Backend Monitoring menulis
+# "Environment", sheet Report menulis "Environtment". Daftar ini sengaja pendek
+# dan eksplisit supaya Navi bisa melihat persis apa yang digabung; tambahkan
+# baris baru kalau ketemu ejaan lain.
+DEPT_ALIASES = {
+    "Health, Safety, & Environent": "Health, Safety & Environment",
+    "Health Safety & Environtment": "Health, Safety & Environment",
+    "Finance Controller & Treasury": "Financial Controller & Treasury",
+    "Bussiness Improvement": "Business Improvement",
+    "IT": "Information Technology & Digital Transformation",
+    "Information Technology": "Information Technology & Digital Transformation",
+    "Digital Transformation & Information Technology":
+        "Information Technology & Digital Transformation",
+}
 
 # Nama yang tampil sebagai baris tersendiri di tabel Performance, sesuai urutan
 # yang Navi berikan. Nama tanpa inisial tetap muncul (nilai nol) supaya terlihat

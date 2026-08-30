@@ -56,6 +56,9 @@ def get_data():
     # Master posisi dipasang sebelum prepare(): kolom departemen di database
     # sebagian terisi nama posisi dan diperbaiki lewat master ini.
     M.set_position_master(DL.load_position_master())
+    # Penambal identitas: kolom lookup di fix_centralized belum ditarik ke bawah
+    # untuk baris baru, sheet Backend Monitoring sudah lengkap.
+    M.set_row_master(DL.load_backend_monitoring())
     df = M.prepare(DL.load_candidates())
     sf = M.stage_frame(df)
     return df, sf, M.lead_time(df, sf)

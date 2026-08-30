@@ -345,3 +345,38 @@ belum ada di MPP 2026 (rata-rata posisi baru berkode 11 digit seperti
 **Tanggal di sheet Update MPP** ditulis hari-dulu (`03/01/2026` = 3 Januari).
 Dibaca dengan format eksplisit `%d/%m/%Y`, bukan tebakan pandas — kalau tidak,
 tanggal 1–12 berisiko terbalik jadi bulan dan daftar resign salah periode.
+
+
+## fix_centralized vs Backend Monitoring — kolom lookup yang belum ditarik
+
+Per 30 Agu 2026, **566 baris** di `fix_centralized` punya Position ID tapi kolom
+POSITION NAME, LEVEL, DEPARTMENT dan LOC-nya **kosong** — kolom lookup yang belum
+ditarik ke bawah untuk baris baru (hampir semuanya SSCP). Akibatnya di portal
+kandidat SSCP tercatat tanpa site, lalu ikut terhitung sebagai BPN, dan tanpa
+departemen.
+
+Baris yang sama di `Report › Backend Monitoring` (gid 0) **sudah terisi lengkap**
+— itulah sheet yang dilihat tim di dashboard monitoring. Portal memakai sheet itu
+sebagai penambal identitas: `data_loader.load_backend_monitoring()` +
+`metrics.set_row_master()`, dicocokkan dengan kunci **nama + Position ID** supaya
+orang yang melamar dua posisi tidak tertukar.
+
+Penambalan ini **hanya mengisi lubang**, tidak menimpa nilai yang sudah ada.
+`fix_centralized` tetap sumber utama karena punya kolom Technical Test dan
+seluruh peta tahap portal.
+
+Hasilnya (Agustus 2026): Ringkasan per site berubah dari *BPN 29* menjadi
+**SSCP 30 · BCP 10 · JKT 2 · BPN 1 · KCP 1**, dan New Hire yang jatuh ke
+"Belum diisi di sumber" turun dari **30 menjadi 1**. Sepanjang 2026, dari 414
+hire hanya **3** yang belum berdepartemen dan **2** yang benar-benar tanpa site.
+
+Sisa 37 baris tanpa site memang tidak punya Position ID di kedua sheet — ini
+perkara input, bukan lookup.
+
+## Satu departemen, beberapa ejaan
+
+Tiga sheet menulis HSE dengan tiga ejaan berbeda: `fix_centralized` dan MPP 2026
+menulis "Environent", Backend Monitoring "Environment", sheet Report
+"Environtment". Tanpa penyatuan, New Hire menampilkan dua baris untuk departemen
+yang sama. `config.DEPT_ALIASES` menyatukannya — daftarnya sengaja pendek dan
+eksplisit supaya terlihat persis apa yang digabung.

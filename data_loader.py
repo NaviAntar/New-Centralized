@@ -153,6 +153,54 @@ def load_mpp(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
     return df
 
 
+def load_backend_monitoring(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
+    """Sheet 'Backend Monitoring' di spreadsheet Report — identitas kandidat.
+
+    Kenapa perlu, padahal database utamanya fix_centralized: di fix_centralized
+    kolom POSITION NAME, LEVEL, DEPARTMENT dan LOC adalah kolom lookup yang
+    BELUM ditarik ke bawah untuk baris-baris baru (per 30 Agu 2026: 566 baris,
+    hampir semuanya SSCP). Baris yang sama di Backend Monitoring sudah terisi
+    lengkap — sheet inilah yang dilihat tim di dashboard monitoring.
+
+    fix_centralized tetap jadi sumber utama karena punya kolom Technical Test
+    dan seluruh peta tahap portal; sheet ini hanya menambal identitasnya.
+
+    Kembalikan frame kosong kalau tidak terbaca — penambalan dilewati, bukan
+    membuat aplikasi gagal.
+    """
+    kolom = {
+        "CANDIDATE NAME": "candidate_id",
+        "Position ID": "position_id",
+        "POSITION NAME": "position_name",
+        "DEPARTMENT": "departement",
+        "DEPT (for Looker)": "dept_looker",
+        "LEVEL": "level",
+        "LOC": "loc",
+    }
+    try:
+        if isinstance(source, pd.DataFrame):
+            df = source
+        else:
+            df, _ = _try_sources([
+                ("argumen langsung", source or ""),
+                ("env BACKEND_MONITORING_CSV",
+                 os.environ.get("BACKEND_MONITORING_CSV", "")),
+                ("export by gid", C.gsheet_gid_url(
+                    C.REPORT_GID_BACKEND, C.REPORT_SPREADSHEET_ID)),
+            ])
+        df.columns = [str(c).strip() for c in df.columns]
+        if "CANDIDATE NAME" not in df.columns:
+            return pd.DataFrame(columns=list(kolom.values()))
+        ada = {a: b for a, b in kolom.items() if a in df.columns}
+        out = df[list(ada)].rename(columns=ada)
+        for c in out.columns:
+            out[c] = out[c].astype(str).str.strip().replace(
+                {"nan": None, "": None, "None": None, "-": None})
+        return out[out["candidate_id"].notna()]
+    except Exception:
+        return pd.DataFrame(columns=list(kolom.values()))
+
+
 def load_position_master(source: str | pd.DataFrame | None = None) -> dict[str, dict]:
     """Master posisi dari Monitoring 2026 > "MPP 2026".
 
