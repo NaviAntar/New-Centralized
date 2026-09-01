@@ -45,6 +45,23 @@ REPORT_SHEET_MPP = "Update MPP"      # daftar karyawan — sumber panel resign
 REPORT_GID_BACKEND = "0"
 REPORT_SHEET_BACKEND = "Backend Monitoring"
 
+# gid tiap tab di spreadsheet Report. Dipakai LEBIH DULU, bukan sebagai cadangan:
+# endpoint gviz berbasis nama tab kadang diam-diam mengembalikan tab lain (untuk
+# "Update MPP" ia mengembalikan tab Summary) atau memotong isinya. Nama tab hanya
+# jadi cadangan kalau gid-nya berubah.
+REPORT_GIDS = {
+    "Summary": "1072355758",
+    "New Hire": "976877691",
+    "ONP": "190296503",
+    "Karyawan Resign": "836878659",
+    "Backend Monitoring": "0",
+    "Update MPP": "504172347",
+}
+REPORT_GID_MPP = REPORT_GIDS["Update MPP"]
+
+# Tab "Backend" di Monitoring 2026 — matriks SLA per level + kalender libur.
+MONITORING_GID_BACKEND = "0"
+
 CACHE_TTL_SECONDS = 60
 
 

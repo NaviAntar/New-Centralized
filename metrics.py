@@ -789,43 +789,48 @@ def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
 def candidate_options(df: pd.DataFrame) -> dict[str, str]:
     """Label pencarian -> cand_key, untuk kotak pencarian Tracking Kandidat.
 
-    Labelnya sengaja hanya berisi NAMA. st.selectbox mencocokkan ketikan ke isi
-    label, jadi label yang memuat posisi dan departemen membuat mengetik "tika"
-    ikut memunculkan orang yang cuma kebetulan departemennya mengandung "tika".
-    Keterangan lain ditampilkan di bawah kotak setelah kandidatnya dipilih.
+    Label ditulis NAMA dulu, baru posisi dan site — supaya saran yang muncul
+    sambil mengetik sudah cukup untuk membedakan dua orang bernama mirip tanpa
+    memilih dulu satu per satu.
 
-    Nama yang kembar diberi pembeda seperlunya — nama posisi, bukan Position ID.
+    Halaman memakai `filter_mode="contains"`, bukan fuzzy bawaan Streamlit. Fuzzy
+    mencocokkan huruf yang terserak (mengetik "tika" ikut menarik label mana pun
+    yang punya t-i-k-a berurutan di mana saja), dan itu yang dulu membuat hasil
+    pencarian terasa acak.
     """
     d = df.sort_values("candidate_id").copy()
-    nama = d["candidate_id"].astype(str)
-    kembar = nama.duplicated(keep=False)
-    label = nama.where(~kembar,
-                       nama + "  ·  " + d["position_name"].fillna("—").astype(str))
+    ekor = ("  ·  " + d["position_name"].fillna("—").astype(str)
+            + "  ·  " + d["loc"].fillna("—").astype(str))
+    label = d["candidate_id"].astype(str) + ekor
 
-    # Kalau setelah diberi nama posisi pun masih kembar, tambahkan site.
-    masih = label.duplicated(keep=False)
-    label = label.where(~masih, label + "  ·  " + d["loc"].fillna("—").astype(str))
+    # Nama + posisi + site pun masih bisa kembar (orang yang sama dua kali di
+    # posisi yang sama). Diberi nomor supaya dua baris tetap bisa dipilih
+    # terpisah — dropdown tidak boleh punya dua entri yang tidak terbedakan.
+    kembar = label.duplicated(keep=False)
+    if kembar.any():
+        urut = label.groupby(label).cumcount() + 1
+        label = label.where(~kembar, label + "  #" + urut.astype(str))
     return dict(zip(label, d["cand_key"]))
 
 
 def position_options(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
     """Label pencarian -> (nama posisi, site), untuk kotak Tracking Posisi.
 
-    Sama seperti candidate_options: yang dicocokkan hanya NAMA POSISI. Site ikut
-    ditulis hanya kalau posisi yang sama ada di lebih dari satu site — di situ
-    site memang jadi pembeda, bukan sekadar keterangan tambahan.
+    Sama seperti candidate_options: NAMA POSISI dulu, baru site dan departemen —
+    posisi yang sama sering ada di beberapa site, dan tanpa keduanya tertulis di
+    saran, orang harus memilih dulu untuk tahu mana yang dimaksud.
     """
     d = df[df["position_name"].notna()].copy()
     if d.empty:
         return {}
-    g = (d.groupby(["position_name", "loc"])
+    g = (d.groupby(["position_name", "loc"], dropna=False)
            .agg(departement=("departement", "first"), kandidat=("cand_key", "nunique"))
            .reset_index()
            .sort_values(["position_name", "loc"]))
 
-    posisi = g["position_name"].astype(str)
-    kembar = posisi.duplicated(keep=False)
-    label = posisi.where(~kembar, posisi + "  ·  " + g["loc"].fillna("—").astype(str))
+    label = (g["position_name"].astype(str)
+             + "  ·  " + g["loc"].fillna("—").astype(str)
+             + "  ·  " + g["departement"].fillna("—").astype(str))
     return dict(zip(label, zip(g["position_name"], g["loc"])))
 
 
@@ -978,6 +983,15 @@ def resign(mpp: pd.DataFrame, periods=None, sites=None) -> pd.DataFrame:
 
     d = mpp.copy()
     d.columns = [str(c).strip() for c in d.columns]
+
+    # Kalau yang terambil ternyata tab lain, berhenti di sini dengan tabel kosong
+    # — panelnya menjelaskan keadaannya, bukan meledak sebagai KeyError di tengah
+    # halaman dan menjatuhkan seluruh Weekly Report.
+    perlu = ["Employee Name", "Position Name", "Location Name",
+             "End Date", "Contract End Date", "Level"]
+    if not set(perlu) <= set(d.columns):
+        return kosong
+
     for c in ("End Date", "Contract End Date"):
         d[c] = _tanggal_mpp(d.get(c))
     d["Level"] = pd.to_numeric(d.get("Level"), errors="coerce")

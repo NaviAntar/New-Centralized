@@ -41,14 +41,31 @@ def _read_csv(url_or_path: str, **kw) -> pd.DataFrame:
     return df
 
 
-def _try_sources(sources: list[tuple[str, str]], **kw) -> tuple[pd.DataFrame, str]:
-    """Coba tiap sumber berurutan. Mengembalikan (frame, label sumber yang berhasil)."""
+def _try_sources(sources: list[tuple[str, str]], require: list[str] | None = None,
+                 **kw) -> tuple[pd.DataFrame, str]:
+    """Coba tiap sumber berurutan. Mengembalikan (frame, label sumber yang berhasil).
+
+    `require` adalah kolom yang WAJIB ada. Sumber yang terbaca tapi kolomnya tidak
+    cocok dianggap gagal dan sumber berikutnya dicoba. Ini penting karena Google
+    tidak selalu menolak permintaan tab yang salah — ia mengembalikan tab lain
+    dengan tenang, dan tanpa pemeriksaan ini yang terbaca dipakai apa adanya lalu
+    meledak jauh di dalam perhitungan sebagai KeyError yang membingungkan.
+    """
     errors = []
     for label, src in sources:
         if not src:
             continue
         try:
-            return _read_csv(src, **kw), label
+            df = _read_csv(src, **kw)
+            if require:
+                ada = {str(c).strip() for c in df.columns}
+                kurang = [c for c in require if c not in ada]
+                if kurang:
+                    raise SheetError(
+                        f"tab yang terambil bukan yang diminta — kolom {kurang} "
+                        f"tidak ada (yang ada: {sorted(ada)[:6]})"
+                    )
+            return df, label
         except Exception as exc:  # noqa: BLE001 — semua kegagalan dikumpulkan
             msg = str(exc)
             if _looks_like_html(msg) or "html" in msg.lower():
@@ -76,9 +93,9 @@ def load_candidates(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
     df, _ = _try_sources([
         ("argumen langsung", source or ""),
         ("env CENTRALIZED_CSV", os.environ.get("CENTRALIZED_CSV", "")),
-        ("gviz by nama tab", C.gsheet_csv_url(C.DB_SHEET_FIX, C.DB_SPREADSHEET_ID)),
         ("export by gid", C.gsheet_gid_url(C.DB_GID_FIX, C.DB_SPREADSHEET_ID)),
-    ])
+        ("gviz by nama tab", C.gsheet_csv_url(C.DB_SHEET_FIX, C.DB_SPREADSHEET_ID)),
+    ], require=["candidate_id"])
 
     if "candidate_id" not in [str(c).strip().lower() for c in df.columns]:
         raise SheetError(
@@ -107,6 +124,8 @@ def load_holidays(source: str | pd.DataFrame | None = None) -> list[pd.Timestamp
             df, _ = _try_sources([
                 ("argumen langsung", source or ""),
                 ("env MONITORING_BACKEND_CSV", os.environ.get("MONITORING_BACKEND_CSV", "")),
+                ("export by gid", C.gsheet_gid_url(
+                    C.MONITORING_GID_BACKEND, C.MONITORING_SPREADSHEET_ID)),
                 ("gviz by nama tab", C.gsheet_csv_url(
                     C.MONITORING_SHEET_BACKEND, C.MONITORING_SPREADSHEET_ID)),
             ], header=None)
@@ -130,9 +149,10 @@ def load_report_sheet(sheet_name: str) -> pd.DataFrame:
     per-site yang berulang; parsing dilakukan dengan mencari teks judul, bukan
     dengan menebak nomor baris — supaya tidak rusak saat ada baris disisipkan.
     """
+    gid = C.REPORT_GIDS.get(sheet_name, C.REPORT_GID_DEFAULT)
     df, _ = _try_sources([
+        ("export by gid", C.gsheet_gid_url(gid, C.REPORT_SPREADSHEET_ID)),
         ("gviz by nama tab", C.gsheet_csv_url(sheet_name, C.REPORT_SPREADSHEET_ID)),
-        ("export by gid", C.gsheet_gid_url(C.REPORT_GID_DEFAULT, C.REPORT_SPREADSHEET_ID)),
     ], header=None)
     return df
 
@@ -145,11 +165,16 @@ def load_mpp(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
     """
     if isinstance(source, pd.DataFrame):
         return source.copy()
+    # gid lebih dulu: endpoint gviz untuk "Update MPP" diam-diam mengembalikan
+    # tab Summary (69 baris, header nama site) — bukan error, jadi dulu terpakai
+    # begitu saja lalu meledak sebagai KeyError di metrics.resign().
     df, _ = _try_sources([
         ("argumen langsung", source or ""),
         ("env MPP_CSV", os.environ.get("MPP_CSV", "")),
+        ("export by gid", C.gsheet_gid_url(C.REPORT_GID_MPP, C.REPORT_SPREADSHEET_ID)),
         ("gviz by nama tab", C.gsheet_csv_url(C.REPORT_SHEET_MPP, C.REPORT_SPREADSHEET_ID)),
-    ])
+    ], require=["Employee Name", "Position Name", "Location Name",
+                "End Date", "Contract End Date", "Level"])
     return df
 
 

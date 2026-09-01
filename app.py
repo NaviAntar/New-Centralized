@@ -257,9 +257,9 @@ def page_tracking_candidate():
     with st.container(key="filterbar_tc"):
         label = st.selectbox(
             "Cari kandidat — ketik namanya",
-            list(pilihan), key="tc_pick",
-            help="Daftar menyusut sambil diketik, tanpa perlu menekan apa pun. "
-                 "Keterangan lengkapnya muncul di bawah setelah dipilih.")
+            list(pilihan), key="tc_pick", filter_mode="contains",
+            help="Ketik namanya; saran yang muncul sudah menyebut posisi dan "
+                 "site, jadi dua orang bernama mirip langsung terbedakan.")
     pilih = pilihan[label]
 
     row = df[df["cand_key"] == pilih].iloc[0]
@@ -346,9 +346,10 @@ def page_tracking_position():
     with st.container(key="filterbar_tp"):
         label = st.selectbox(
             "Cari posisi — ketik nama posisinya",
-            list(pilihan), key="tp_pick",
-            help="Daftar menyusut sambil diketik, tanpa perlu menekan apa pun. "
-                 "Keterangan lengkapnya muncul di bawah setelah dipilih.")
+            list(pilihan), key="tp_pick", filter_mode="contains",
+            help="Ketik nama posisinya; saran yang muncul sudah menyebut site "
+                 "dan departemen, jadi posisi yang ada di beberapa site "
+                 "langsung terbedakan.")
     posisi, loc = pilihan[label]
 
     kand = M.position_candidates(df, lt, posisi, loc)
