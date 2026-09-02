@@ -30,6 +30,25 @@ MONITORING_SPREADSHEET_ID = "1WxPctId12ETTmELrkC6NGUJxKMW45R8llENqTtRt1hU"
 MONITORING_GID_DEFAULT = "593032148"
 MONITORING_SHEET_BACKEND = "Backend"
 
+# PRF Management — pengajuan posisi sebelum masuk proses rekrutmen.
+PRF_SPREADSHEET_ID = "14BT6eNFBlaKouhlQWfR1N72v-wr4bD3qntcsZiDv7gk"
+PRF_GID_TRACKING = "0"
+PRF_SHEET_TRACKING = "PRF Tracking"
+
+# Level yang dihitung Staff. Sisanya — apa pun isinya — masuk Non Staff, jadi
+# level baru tidak diam-diam hilang dari filter "Jenis Level".
+PRF_STAFF_LEVELS = [
+    "Junior Staff", "Supervisor", "Superintendent",
+    "Manager", "General Manager", "Boards", "Commisioner",
+]
+
+# Nilai yang boleh muncul di filter, ditulis lengkap walau datanya belum punya
+# semuanya. CLOSE dan CANCEL belum ada satu baris pun per 1 Sep 2026; kalau
+# daftarnya diambil dari data, filternya menyusut sendiri begitu keadaan berubah
+# dan orang mengira fiturnya hilang.
+PRF_TRACKING_VALUES = ["APPROVED", "ROUTING PRF"]
+PRF_STATUS_VALUES = ["CLOSE", "OPEN", "HOLD", "CANCEL"]
+
 # Report Recruitment — Summary, New Hire, ONP.
 REPORT_SPREADSHEET_ID = "1_MAK4sNAKQpQA7fV3HPvsRN3BI-EIowyRYEM5D3Av4w"
 REPORT_GID_DEFAULT = "1072355758"
@@ -124,6 +143,7 @@ PAGE_ACCESS = {
     "weekly": {ROLE_RECRUITMENT, ROLE_USER},
     "tracking_candidate": {ROLE_RECRUITMENT, ROLE_USER},
     "tracking_position": {ROLE_RECRUITMENT, ROLE_USER},
+    "prf": {ROLE_RECRUITMENT, ROLE_USER},
     "rec_room": {ROLE_RECRUITMENT},
 }
 

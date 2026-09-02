@@ -226,6 +226,25 @@ def load_backend_monitoring(source: str | pd.DataFrame | None = None) -> pd.Data
         return pd.DataFrame(columns=list(kolom.values()))
 
 
+def load_prf(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
+    """Tab "PRF Tracking" dari spreadsheet PRF Management.
+
+    Satu baris = satu pengajuan posisi. Sumbernya terpisah dari database
+    kandidat: PRF terjadi SEBELUM ada kandidat, jadi tidak bisa diturunkan dari
+    fix_centralized.
+    """
+    if isinstance(source, pd.DataFrame):
+        return source.copy()
+    df, _ = _try_sources([
+        ("argumen langsung", source or ""),
+        ("env PRF_CSV", os.environ.get("PRF_CSV", "")),
+        ("export by gid", C.gsheet_gid_url(C.PRF_GID_TRACKING, C.PRF_SPREADSHEET_ID)),
+        ("gviz by nama tab", C.gsheet_csv_url(
+            C.PRF_SHEET_TRACKING, C.PRF_SPREADSHEET_ID)),
+    ], require=["request_number", "Site", "position_name", "Tracking PRF", "Status"])
+    return df
+
+
 def load_position_master(source: str | pd.DataFrame | None = None) -> dict[str, dict]:
     """Master posisi dari Monitoring 2026 > "MPP 2026".
 

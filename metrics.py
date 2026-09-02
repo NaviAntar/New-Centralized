@@ -1020,3 +1020,96 @@ def resign(mpp: pd.DataFrame, periods=None, sites=None) -> pd.DataFrame:
     out.columns = ["Karyawan", "Position Name", "Site", "Resign Date",
                    "End Contract", "Level"]
     return out.sort_values(["Site", "Resign Date"])
+
+
+# ===========================================================================
+# PRF Tracking
+# ===========================================================================
+# Satu baris di sheet "PRF Tracking" = satu pengajuan posisi. Kartu dan tabel
+# menghitung BARIS PRF, bukan qty orang: satu PRF bisa meminta 14 orang, dan
+# menjumlahkan qty membuat "berapa PRF yang sudah approved" jadi pertanyaan yang
+# berbeda dari yang ditanyakan. Qty tetap ditampilkan per baris di tabel.
+PRF_COLS = ["prf_id", "prf_class", "qty", "position_name", "site", "divisi",
+            "level", "level_type", "tracking", "status"]
+
+
+def prepare_prf(df: pd.DataFrame) -> pd.DataFrame:
+    """Rapikan sheet PRF Tracking jadi bentuk yang dipakai halaman.
+
+    Yang dikerjakan di sini dan tidak di halaman:
+      · `prf_id` — Request Number kalau ada, kalau kosong pakai ID PRF. Dua kolom
+        untuk satu identitas membingungkan di tabel, jadi digabung sejak awal.
+      · `level_type` — Staff / Non Staff, dari daftar level Staff di config.
+      · Nilai Tracking dan Status di-uppercase supaya "Open" dan "OPEN" tidak
+        jadi dua kategori berbeda di filter.
+    """
+    d = df.copy()
+    d.columns = [str(c).strip() for c in d.columns]
+
+    def teks(kolom: str) -> pd.Series:
+        s = d.get(kolom, pd.Series(index=d.index, dtype=object))
+        return (s.astype(str).str.strip()
+                 .replace({"nan": None, "": None, "None": None, "-": None}))
+
+    req, idp = teks("request_number"), teks("ID PRF")
+    out = pd.DataFrame(index=d.index)
+    out["prf_id"] = req.fillna(idp).fillna("—")
+    out["prf_class"] = teks("prf_class").fillna("—")
+    out["qty"] = pd.to_numeric(d.get("qty"), errors="coerce").fillna(0).astype(int)
+    out["position_name"] = teks("position_name").fillna("—")
+    out["site"] = teks("Site").fillna(teks("loc")).fillna("—").str.upper()
+    out["divisi"] = teks("divisi").fillna("—")
+    out["level"] = teks("level").fillna("—")
+
+    staf = {s.strip().lower() for s in C.PRF_STAFF_LEVELS}
+    out["level_type"] = out["level"].str.lower().map(
+        lambda v: "Staff" if v in staf else "Non Staff")
+    # Level yang belum terisi bukan Non Staff — itu klaim yang tidak ada dasarnya.
+    out.loc[out["level"] == "—", "level_type"] = "—"
+
+    out["tracking"] = teks("Tracking PRF").fillna("—").str.upper()
+    out["status"] = teks("Status").fillna("—").str.upper()
+    out["tanggal_pengajuan"] = pd.to_datetime(d.get("Tanggal Pengajuan"),
+                                              errors="coerce")
+    out["tanggal_approved"] = pd.to_datetime(d.get("Tanggal Approved"),
+                                             errors="coerce")
+    return out.reset_index(drop=True)
+
+
+def filter_prf(df: pd.DataFrame, sites=None, levels=None, level_types=None,
+               trackings=None, statuses=None) -> pd.DataFrame:
+    """Terapkan kelima filter halaman. Daftar kosong berarti 'semua'."""
+    d = df
+    for kolom, pilihan in (("site", sites), ("level", levels),
+                           ("level_type", level_types), ("tracking", trackings),
+                           ("status", statuses)):
+        if pilihan:
+            d = d[d[kolom].isin(list(pilihan))]
+    return d
+
+
+def prf_summary(df: pd.DataFrame) -> dict:
+    """Angka untuk kartu di atas halaman PRF.
+
+    Approved dan Not Approved dihitung dari kolom Tracking PRF — itu yang
+    menyatakan pengajuannya sudah disetujui atau masih berjalan. Close dihitung
+    dari kolom Status, dan persentasenya terhadap TOTAL PRF (bukan terhadap yang
+    approved saja) sesuai permintaan.
+    """
+    total = len(df)
+    approved = int((df["tracking"] == "APPROVED").sum()) if total else 0
+    close = int((df["status"] == "CLOSE").sum()) if total else 0
+
+    def persen(n: int) -> float:
+        return round(n / total * 100, 1) if total else 0.0
+
+    return {
+        "total": total,
+        "qty": int(df["qty"].sum()) if total else 0,
+        "approved": approved,
+        "approved_pct": persen(approved),
+        "not_approved": total - approved,
+        "not_approved_pct": persen(total - approved),
+        "close": close,
+        "close_pct": persen(close),
+    }

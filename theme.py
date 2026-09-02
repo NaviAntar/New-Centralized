@@ -1910,8 +1910,12 @@ def data_table(headers: list[str], rows: list[list], align: str | None = None,
     if max_rows and len(rows) > max_rows:
         tinggi = 38 + max_rows * 37
         gaya = f' style="max-height:{tinggi}px;overflow-y:auto"'
-        kaki = (f'<div class="dh-tablefoot">Menampilkan {max_rows} dari '
-                f"{len(rows)} baris — gulir di dalam tabel untuk melihat sisanya</div>")
+        # Kakinya tidak menyebut "menampilkan N": tinggi baris berbeda antar
+        # tabel (nama posisi panjang membungkus jadi dua baris), jadi jumlah yang
+        # benar-benar terlihat tidak selalu sama dengan max_rows — menyebutkannya
+        # justru jadi angka yang salah.
+        kaki = (f'<div class="dh-tablefoot">{len(rows)} baris — '
+                "gulir di dalam tabel untuk melihat sisanya</div>")
 
     return (f'<div class="dh-tablewrap"{gaya}><table class="dh-table dh-portal">'
             f"<thead><tr>{thead}</tr></thead><tbody>{''.join(body)}{tot}</tbody>"

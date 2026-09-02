@@ -380,3 +380,37 @@ menulis "Environent", Backend Monitoring "Environment", sheet Report
 "Environtment". Tanpa penyatuan, New Hire menampilkan dua baris untuk departemen
 yang sama. `config.DEPT_ALIASES` menyatukannya — daftarnya sengaja pendek dan
 eksplisit supaya terlihat persis apa yang digabung.
+
+
+## Halaman PRF Tracking
+
+Sumbernya spreadsheet **PRF Management › tab "PRF Tracking"** (`config.PRF_*`),
+terpisah dari database kandidat: PRF terjadi SEBELUM ada kandidat, jadi tidak
+bisa diturunkan dari fix_centralized.
+
+**Kartu.** Jumlah PRF · Approved · Not Approved · Status Close. Approved dan Not
+Approved dibaca dari kolom **Tracking PRF**; Status Close dari kolom **Status**,
+dan persentasenya terhadap **total PRF** (bukan terhadap yang approved saja),
+sesuai permintaan Navi.
+
+Semua angka menghitung **baris PRF**, bukan qty orang. Satu PRF bisa meminta 14
+orang sekaligus; menjumlahkan qty menjawab pertanyaan yang berbeda dari "berapa
+PRF yang sudah approved". Qty tetap tampil per baris di tabel, dan total qty
+disebut sebagai keterangan kecil di kartu Jumlah PRF.
+
+**Filter.** Site · Level · Jenis Level · Tracking PRF · Status PRF. Site, Level,
+dan Jenis Level diambil dari data. Tracking PRF dan Status PRF memakai daftar
+tetap di `config.PRF_TRACKING_VALUES` dan `config.PRF_STATUS_VALUES` — CLOSE dan
+CANCEL belum pernah ada satu baris pun, dan filter yang menyusut sendiri terbaca
+seperti fitur yang hilang, bukan seperti keadaan yang memang belum terjadi.
+
+**Jenis Level.** Staff = Junior Staff, Supervisor, Superintendent, Manager,
+General Manager, Boards, Commisioner (`config.PRF_STAFF_LEVELS`). Sisanya —
+apa pun isinya — masuk Non Staff, jadi level baru tidak diam-diam hilang dari
+filter. Baris yang levelnya kosong ditandai "—", bukan Non Staff: itu klaim yang
+tidak ada dasarnya. Per 2 Sep 2026 seluruh 144 baris berlevel Staff.
+
+**Kolom identitas.** Tabel memakai satu kolom **Request Number** saja: kalau
+`request_number` kosong, dipakai `ID PRF`. Dua kolom untuk satu identitas, yang
+masing-masing separuhnya kosong, hanya menyulitkan pembacaan — per 2 Sep 2026 ada
+3 baris yang baru punya ID PRF (`H15P1`, `H12P1`, `H12P2`).

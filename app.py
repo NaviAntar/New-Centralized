@@ -38,6 +38,7 @@ NAV = [
     ("weekly", "Weekly Report"),
     ("tracking_candidate", "Tracking Kandidat"),
     ("tracking_position", "Tracking Posisi"),
+    ("prf", "PRF Tracking"),
     ("rec_room", "Recruitment Room"),
 ]
 
@@ -542,7 +543,114 @@ def page_weekly():
 
 
 # ===========================================================================
-# ⑤ RECRUITMENT ROOM
+# ⑤ PRF TRACKING
+# ===========================================================================
+@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Mengambil data PRF…")
+def get_prf():
+    return M.prepare_prf(DL.load_prf())
+
+
+def page_prf():
+    try:
+        prf = get_prf()
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"Data PRF tidak bisa diambil.\n\n{exc}")
+        st.stop()
+
+    # Pilihan filter diambil dari data untuk site/level/divisi, tapi Tracking dan
+    # Status memakai daftar tetap di config: CLOSE dan CANCEL belum pernah ada
+    # satu baris pun, dan filter yang menyusut sendiri terbaca seperti fitur yang
+    # hilang, bukan seperti keadaan yang memang belum terjadi.
+    site_opt = sorted(prf["site"].unique())
+    level_opt = sorted(prf["level"].unique())
+
+    site_p, level_p, jenis_p, track_p, status_p = filterbar("prf", [
+        {"label": "Site", "key": "prf_site", "kind": "multi",
+         "options": site_opt, "default": [], "placeholder": "Semua site"},
+        {"label": "Level", "key": "prf_level", "kind": "multi",
+         "options": level_opt, "default": [], "placeholder": "Semua level"},
+        {"label": "Jenis Level", "key": "prf_jenis", "kind": "multi",
+         "options": ["Staff", "Non Staff"], "default": [],
+         "placeholder": "Staff & Non Staff"},
+        {"label": "Tracking PRF", "key": "prf_track", "kind": "multi",
+         "options": C.PRF_TRACKING_VALUES, "default": [], "placeholder": "Semua"},
+        {"label": "Status PRF", "key": "prf_status", "kind": "multi",
+         "options": C.PRF_STATUS_VALUES, "default": [], "placeholder": "Semua"},
+    ])
+
+    d = M.filter_prf(prf, sites=site_p, levels=level_p, level_types=jenis_p,
+                     trackings=track_p, statuses=status_p)
+    s = M.prf_summary(d)
+
+    dipilih = [", ".join(x) for x in (site_p, level_p, jenis_p, track_p, status_p) if x]
+    label_filter = " · ".join(dipilih) if dipilih else "semua PRF"
+
+    # ── Kartu ──────────────────────────────────────────────────────────────
+    st.markdown(theme.section_heading(1, "Ringkasan PRF", label_filter),
+                unsafe_allow_html=True)
+    k = st.columns(4, gap="small")
+    with k[0]:
+        st.markdown(theme.kpi_card(
+            "Jumlah PRF", n(s["total"]), f'{n(s["qty"])} orang diminta',
+            emoji="📄", accent=theme.BRAND["navy"], value_size=28),
+            unsafe_allow_html=True)
+    with k[1]:
+        st.markdown(theme.kpi_card(
+            "Approved", n(s["approved"]), f'{n(s["approved_pct"], 1)}% dari total PRF',
+            emoji="✅", accent=theme.STATUS["good"], value_size=28),
+            unsafe_allow_html=True)
+    with k[2]:
+        st.markdown(theme.kpi_card(
+            "Not Approved", n(s["not_approved"]),
+            f'{n(s["not_approved_pct"], 1)}% dari total PRF',
+            emoji="⏳", accent=theme.STATUS["warn"], value_size=28),
+            unsafe_allow_html=True)
+    with k[3]:
+        st.markdown(theme.kpi_card(
+            "Status Close", n(s["close"]), f'{n(s["close_pct"], 1)}% dari total PRF',
+            emoji="🔒", accent=theme.BRAND["orange"], value_size=28),
+            unsafe_allow_html=True)
+
+    st.markdown(theme.inline_note(
+        "<b>Approved</b> dan <b>Not Approved</b> dibaca dari kolom Tracking PRF — "
+        "pengajuannya sudah disetujui atau masih berjalan. <b>Status Close</b> dibaca "
+        "dari kolom Status dan persentasenya dihitung terhadap <b>total PRF</b>, bukan "
+        "terhadap yang approved saja. Semua angka menghitung <b>baris PRF</b>, bukan qty "
+        "orang — satu PRF bisa meminta beberapa orang sekaligus, dan qty-nya tetap "
+        "terlihat di tiap baris tabel.",
+        block=True), unsafe_allow_html=True)
+
+    # ── Tabel ──────────────────────────────────────────────────────────────
+    st.markdown(theme.section_heading(2, "Daftar PRF", "satu baris satu pengajuan"),
+                unsafe_allow_html=True)
+    with theme.card("prf_tabel", "PRF", f"{n(len(d))} baris · {label_filter}"):
+        if d.empty:
+            st.markdown(theme.empty_state(
+                "Tidak ada PRF", "Tidak ada baris yang cocok dengan filter di atas."),
+                unsafe_allow_html=True)
+            return
+
+        baris = []
+        for r in d.sort_values(["site", "level", "position_name"]).itertuples():
+            baris.append([
+                theme.esc(r.prf_id), theme.esc(r.prf_class), n(r.qty),
+                theme.esc(r.position_name), theme.esc(r.site), theme.esc(r.divisi),
+                f"{theme.esc(r.level)} <span style='color:{theme.NEUTRAL['text_soft']}'>"
+                f"· {theme.esc(r.level_type)}</span>",
+                theme.esc(r.tracking), theme.esc(r.status),
+            ])
+        st.markdown(theme.data_table(
+            ["Request Number", "PRF Class", "Qty", "Position Name", "Site",
+             "Divisi", "Level", "Tracking PRF", "Status PRF"],
+            baris, align="llrlllll" + "l", max_rows=10), unsafe_allow_html=True)
+        st.markdown(theme.inline_note(
+            "Kolom <b>Request Number</b> memakai ID PRF kalau nomor requestnya belum "
+            "terbit — satu kolom identitas, bukan dua kolom yang separuhnya kosong.",
+            block=True), unsafe_allow_html=True)
+
+
+# ===========================================================================
+# ⑥ RECRUITMENT ROOM
 # ===========================================================================
 def page_rec_room():
     st.markdown(theme.section_heading(
@@ -625,6 +733,7 @@ def main():
         "weekly": ("Weekly Report", "Performance recruiter, New Hire, ringkasan site, On Progress, resign"),
         "tracking_candidate": ("Tracking Kandidat", "Proses seleksi per kandidat, tahap demi tahap"),
         "tracking_position": ("Tracking Posisi", "Cari posisi, site tertera di tiap baris"),
+        "prf": ("PRF Tracking", "Pengajuan posisi: approval, status, dan sebarannya"),
         "rec_room": ("Recruitment Room", "Form monitoring per site"),
     }
     title, subtitle = titles[st.session_state.page]
@@ -643,6 +752,8 @@ def main():
         page_tracking_candidate()
     elif page == "tracking_position":
         page_tracking_position()
+    elif page == "prf":
+        page_prf()
 
 
 main()
