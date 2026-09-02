@@ -414,3 +414,44 @@ tidak ada dasarnya. Per 2 Sep 2026 seluruh 144 baris berlevel Staff.
 `request_number` kosong, dipakai `ID PRF`. Dua kolom untuk satu identitas, yang
 masing-masing separuhnya kosong, hanya menyulitkan pembacaan — per 2 Sep 2026 ada
 3 baris yang baru punya ID PRF (`H15P1`, `H12P1`, `H12P2`).
+
+
+## Unduh tabel: Excel dan Gambar
+
+Tiap tabel punya dua tombol kecil di ujung kanan atasnya. Yang diunduh adalah
+**tabel yang sedang tampil**, sudah kena filter halaman — bukan data mentah.
+Kalau yang keluar selalu data mentah, orang mengirimkan berkas yang isinya
+berbeda dari yang baru saja mereka lihat di layar, dan itu jenis kesalahan yang
+baru ketahuan setelah berkasnya beredar.
+
+Karena itu semua tabel lewat satu pintu, `app.tabel()`, bukan langsung ke
+`theme.data_table()`: satu sumber baris, dua cara menampilkannya.
+
+**Excel (.xlsx).** Header bergaya portal, freeze pane, autofilter, dan satu baris
+catatan berisi judul + filter aktif + tanggal unduh. Angka yang di layar diformat
+gaya Indonesia (`1.150`, `40,4`, `166,2%`) dikembalikan jadi **angka betulan** di
+Excel — kalau dibiarkan teks, kolomnya tidak bisa dijumlahkan atau diurutkan,
+padahal itu alasan orang mengunduh ke Excel. Teks yang kebetulan berbentuk angka
+tidak ikut dikonversi: pola pencocokannya harus cocok seluruh teks, dan nilai
+berawalan nol (`013`) tetap teks karena itu kode, bukan angka.
+
+**Gambar (.png).** Tabelnya digambar ulang dengan matplotlib memakai warna yang
+sama dengan di layar — Streamlit tidak bisa memotret dirinya sendiri. Hasilnya
+justru lebih rapi: tidak ada scrollbar, tidak terpotong, dan **seluruh baris
+ikut** walau di layar harus digulir. Dipakai untuk ditempel ke deck atau dikirim
+di WhatsApp.
+
+Tabel di atas **60 baris** tidak digambar otomatis — menggambar 257 baris perlu
+~2 detik dan menghasilkan berkas 3 MB, biaya yang tidak pantas dibayar setiap
+kali filter digeser. Tombolnya jadi "siapkan dulu": klik sekali untuk menyiapkan,
+lalu tombolnya berubah jadi unduhan. Hasilnya di-cache, jadi filter yang sama
+tidak digambar dua kali.
+
+**Siapa yang bisa mengunduh.** Hanya peran Recruitment — peran User memang tidak
+diberi export sejak awal. Kalau mau dibuka untuk semua, ubah `export` di
+`config.ACTION_ACCESS`.
+
+Tabel Tahap seleksi memakai penampil sendiri (`theme.stage_table`) karena tiap
+barisnya berisi lencana status, tapi tetap bisa diunduh lewat `app.unduh_saja()`.
+Di berkasnya lencana jadi teks — di Excel dan di gambar, warna saja tidak cukup
+untuk menyampaikan "Late".

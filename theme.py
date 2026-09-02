@@ -1857,6 +1857,28 @@ div[class*="st-key-filterbar"] {{
   box-shadow: 0 1px 2px rgba(17,24,39,.05);
 }}
 
+/* Tombol unduh di ujung kanan atas tabel. Sengaja kecil dan abu: ini pelengkap,
+   bukan aksi utama halaman — tabelnya sendiri yang harus paling menonjol. */
+div[class*="st-key-unduh_"] button {{
+  background: {NEUTRAL["card"]} !important;
+  border: 1px solid {NEUTRAL["border"]} !important;
+  color: {NEUTRAL["text_muted"]} !important;
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  letter-spacing: .02em;
+  padding: 3px 6px !important;
+  min-height: 28px !important;
+  white-space: nowrap !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}}
+div[class*="st-key-unduh_"] button:hover {{
+  border-color: {BRAND["orange"]} !important;
+  color: {BRAND["orange_deep"]} !important;
+  background: {tint(BRAND["orange"], .95)} !important;
+}}
+div[class*="st-key-unduh_"] {{ margin-bottom: -6px; }}
+
 /* expander */
 [data-testid="stExpander"] details {{
   background: {NEUTRAL["card"]} !important;

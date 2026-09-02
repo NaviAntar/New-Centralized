@@ -27,6 +27,7 @@ import auth  # noqa: E402
 import charts  # noqa: E402
 import config as C  # noqa: E402
 import data_loader as DL  # noqa: E402
+import exporters as XP  # noqa: E402
 import metrics as M  # noqa: E402
 import theme  # noqa: E402
 
@@ -158,6 +159,89 @@ def filterbar(key: str, specs: list[dict]):
                     hasil.append(st.text_input(s["label"], key=s["key"],
                                                placeholder=s.get("placeholder", "")))
     return hasil
+
+
+# Di atas jumlah baris ini, gambar tidak dibuat otomatis. Menggambar 257 baris
+# perlu ~2 detik dan menghasilkan berkas 3 MB — biaya yang tidak pantas dibayar
+# setiap kali filter digeser, apalagi untuk gambar yang jarang dipakai sepanjang
+# itu. Tabel sepanjang itu tetap bisa diunduh, tapi disiapkan saat diminta.
+PNG_LANGSUNG_MAKS = 60
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def _xlsx(judul: str, catatan: str, headers: tuple, rows: tuple,
+          total_row: tuple | None) -> bytes:
+    df = XP.frame_dari_baris(list(headers), [list(r) for r in rows],
+                             list(total_row) if total_row else None)
+    return XP.to_excel(df, judul, catatan)
+
+
+@st.cache_data(show_spinner="Menyiapkan gambar…", max_entries=32)
+def _png(judul: str, sub: str, headers: tuple, rows: tuple,
+         total_row: tuple | None, align: str | None) -> bytes:
+    df = XP.frame_dari_baris(list(headers), [list(r) for r in rows],
+                             list(total_row) if total_row else None)
+    return XP.to_png(df, judul, sub, align=align, baris_total=bool(total_row))
+
+
+def unduh_saja(key: str, judul: str, sub: str, headers: list[str],
+               rows: list[list], align: str | None = None,
+               total_row: list | None = None):
+    """Baris tombol Excel + Gambar, rata kanan di atas tabel.
+
+    Dipisah dari tabel() karena Tahap seleksi memakai penampil sendiri tapi tetap
+    perlu bisa diunduh.
+
+    Hanya peran Recruitment yang melihatnya — peran User memang tidak diberi
+    export sejak awal. Kalau nanti mau dibuka untuk semua, ubah `export` di
+    config.ACTION_ACCESS.
+    """
+    if not auth.can_do("export") or not rows:
+        return
+    beku_h = tuple(str(h) for h in headers)
+    beku_r = tuple(tuple(str(v) for v in r) for r in rows)
+    beku_t = tuple(str(v) for v in total_row) if total_row else None
+    catatan = f"{judul} — {sub} · diunduh {pd.Timestamp.today():%d %b %Y}"
+
+    _, k_xls, k_png = st.columns([1, 0.085, 0.085], gap="small")
+    with k_xls, st.container(key=f"unduh_{key}_xls"):
+        st.download_button(
+            "Excel", _xlsx(judul, catatan, beku_h, beku_r, beku_t),
+            file_name=XP.nama_berkas(judul, "xlsx"),
+            mime=("application/vnd.openxmlformats-officedocument"
+                  ".spreadsheetml.sheet"),
+            key=f"dl_{key}_xls", width="stretch",
+            help="Isi tabel apa adanya, mengikuti filter yang sedang aktif")
+    with k_png, st.container(key=f"unduh_{key}_png"):
+        siap = f"siap_png_{key}"
+        if len(rows) <= PNG_LANGSUNG_MAKS or st.session_state.get(siap):
+            st.download_button(
+                "Gambar", _png(judul, sub, beku_h, beku_r, beku_t, align),
+                file_name=XP.nama_berkas(judul, "png"), mime="image/png",
+                key=f"dl_{key}_png", width="stretch",
+                help="PNG tabel ini — seluruh baris ikut, tanpa perlu digulir")
+        elif st.button("Gambar", key=f"prep_{key}_png", width="stretch",
+                       help=f"Tabel ini {len(rows)} baris. Klik sekali untuk "
+                            "menyiapkan gambarnya."):
+            st.session_state[siap] = True
+            st.rerun()
+
+
+def tabel(key: str, judul: str, sub: str, headers: list[str], rows: list[list],
+          align: str | None = None, total_row: list | None = None,
+          max_rows: int | None = 10):
+    """Tabel portal + tombol unduh di ujung kanan atasnya.
+
+    Semua tabel lewat sini, bukan langsung ke theme.data_table(), supaya berkas
+    unduhan dijamin memakai baris yang sama persis dengan yang tampil di layar —
+    termasuk filter yang sedang aktif. Kalau tiap halaman menyusun ulang datanya
+    sendiri untuk diunduh, cepat atau lambat isi berkas dan isi layar berbeda,
+    dan itu baru ketahuan setelah berkasnya beredar.
+    """
+    unduh_saja(key, judul, sub, headers, rows, align=align, total_row=total_row)
+    st.markdown(theme.data_table(headers, rows, align=align,
+                                total_row=total_row, max_rows=max_rows),
+                unsafe_allow_html=True)
 
 
 def periode_terpilih(tahun_pilih, bulan_pilih) -> list[tuple[int, int]]:
@@ -330,6 +414,23 @@ def page_tracking_candidate():
             ada = [i for i, r in enumerate(rows) if r["start"] or r["end"]]
             if ada:
                 rows[ada[-1]]["status"] = "failed"
+
+        # Tabel tahap punya penampil sendiri (theme.stage_table) karena tiap
+        # barisnya berisi lencana status. Untuk diunduh, isinya sama tapi
+        # lencananya jadi teks: di Excel dan di gambar, warna saja tidak cukup
+        # untuk menyampaikan "Late".
+        unduh_saja(
+            "tc_stages", f'Tahap seleksi — {row["candidate_id"]}',
+            f'{row.get("position_name") or "—"} · {row.get("loc") or "—"}',
+            ["Tahap", "Status", "Mulai", "Selesai", "LT", "Budget", "SLA"],
+            [[r["name"],
+              {"done": "Selesai", "active": "Berjalan", "idle": "Belum mulai",
+               "failed": "Gagal", "na": "Tidak berlaku"}[r["status"]],
+              str(r["start"] or "—"), str(r["end"] or "—"),
+              "—" if r["lt"] is None else str(r["lt"]),
+              "—" if r["budget"] is None else str(r["budget"]),
+              r["sla"] or "—"] for r in rows],
+            align="lllrrrl")
         st.markdown(theme.stage_table(rows), unsafe_allow_html=True)
 
 
@@ -376,16 +477,15 @@ def page_tracking_position():
                         unsafe_allow_html=True)
 
     with theme.card("tp_kand", "Kandidat untuk posisi ini", f"{len(kand)} orang"):
-        st.markdown(theme.data_table(
-            ["Kandidat", "Posisi", "Departemen", "Level", "Loc", "Last progress",
-             "Total LT", "Status"],
-            [[theme.esc(r.candidate_id), theme.esc(r.position_name),
-              theme.esc(r.departement), theme.esc(r.level), theme.esc(r.loc),
-              theme.esc(r.last_progress),
-              n(r.total_lt) if pd.notna(r.total_lt) else "—",
-              theme.result_pill(r.status1)]
-             for r in kand.itertuples()], align="llllllrl", max_rows=10),
-            unsafe_allow_html=True)
+        tabel("tp_kand", f"Kandidat {posisi}", f"{loc or '—'} · {len(kand)} orang",
+              ["Kandidat", "Posisi", "Departemen", "Level", "Loc", "Last progress",
+               "Total LT", "Status"],
+              [[theme.esc(r.candidate_id), theme.esc(r.position_name),
+                theme.esc(r.departement), theme.esc(r.level), theme.esc(r.loc),
+                theme.esc(r.last_progress),
+                n(r.total_lt) if pd.notna(r.total_lt) else "—",
+                theme.result_pill(r.status1)]
+               for r in kand.itertuples()], align="llllllrl")
 
 
 # ===========================================================================
@@ -448,9 +548,10 @@ def page_weekly():
                  if pd.notna(ach) else "—"),
                 n(r.candidates), n(r.onboarding),
             ])
-        st.markdown(theme.data_table(
-            ["Nama", "SLA Actual", "SLA Budget", "Achievement", "Kandidat", "Onboarding"],
-            baris, align="lrrrrr"), unsafe_allow_html=True)
+        tabel("wk_perf", "Performance recruiter",
+              f"{label_periode} · {label_site}",
+              ["Nama", "SLA Actual", "SLA Budget", "Achievement", "Kandidat",
+               "Onboarding"], baris, align="lrrrrr", max_rows=None)
         st.markdown(theme.inline_note(
             "Tiap tahap dirata-ratakan dulu di antara kandidat yang orang itu tangani, lalu "
             "rata-rata antar tahap dijumlahkan — <b>seluruh tahap proses ikut</b>, termasuk "
@@ -473,10 +574,9 @@ def page_weekly():
         else:
             kolom = list(nh.columns)
             isi = [[theme.esc(r[0])] + [n(v) for v in r[1:]] for r in nh.values.tolist()]
-            st.markdown(theme.data_table(kolom, isi[:-1], total_row=isi[-1],
-                                         align="l" + "r" * (len(kolom) - 1),
-                                         max_rows=10),
-                        unsafe_allow_html=True)
+            tabel("wk_nh", "New Hire", f"{label_periode} · {label_site}",
+                  kolom, isi[:-1], total_row=isi[-1],
+                  align="l" + "r" * (len(kolom) - 1))
 
     # ── Ringkasan per site ─────────────────────────────────────────────────
     st.markdown(theme.section_heading(3, "Ringkasan per site", "onboarding per site"),
@@ -490,10 +590,9 @@ def page_weekly():
         else:
             kolom = list(sm.columns)
             isi = [[theme.esc(r[0])] + [n(v) for v in r[1:]] for r in sm.values.tolist()]
-            st.markdown(theme.data_table(kolom, isi[:-1], total_row=isi[-1],
-                                         align="l" + "r" * (len(kolom) - 1),
-                                         max_rows=10),
-                        unsafe_allow_html=True)
+            tabel("wk_sum", "Ringkasan per site", f"{label_periode} · {label_site}",
+                  kolom, isi[:-1], total_row=isi[-1],
+                  align="l" + "r" * (len(kolom) - 1))
 
     # ── On Progress ────────────────────────────────────────────────────────
     st.markdown(theme.section_heading(
@@ -507,12 +606,13 @@ def page_weekly():
                 st.markdown(theme.empty_state("Kosong", "Tidak ada di tahap ini.", emoji="—"),
                             unsafe_allow_html=True)
             else:
-                st.markdown(theme.data_table(
-                    ["Kandidat", "Posisi", "Site", "Tanggal"],
-                    [[theme.esc(r.candidate_id), theme.esc(r.position_name), theme.esc(r.loc),
-                      theme.esc(r.tanggal.date() if pd.notna(r.tanggal) else None)]
-                     for r in sel.itertuples()], align="llll", max_rows=10),
-                    unsafe_allow_html=True)
+                tabel(f"wk_onp_{nama}", f"On Progress {nama}",
+                      f"{label_periode} · {label_site}",
+                      ["Kandidat", "Posisi", "Site", "Tanggal"],
+                      [[theme.esc(r.candidate_id), theme.esc(r.position_name),
+                        theme.esc(r.loc),
+                        theme.esc(r.tanggal.date() if pd.notna(r.tanggal) else None)]
+                       for r in sel.itertuples()], align="llll")
 
     # ── Karyawan resign ────────────────────────────────────────────────────
     st.markdown(theme.section_heading(
@@ -533,13 +633,14 @@ def page_weekly():
                 st.markdown(theme.empty_state("Tidak ada yang resign di periode ini", "—"),
                             unsafe_allow_html=True)
             else:
-                st.markdown(theme.data_table(
-                    ["Karyawan", "Posisi", "Site", "Tanggal resign", "Akhir kontrak", "Level"],
-                    [[theme.esc(r[1]), theme.esc(r[2]), theme.esc(r[3]),
-                      theme.esc(r[4].date() if pd.notna(r[4]) else None),
-                      theme.esc(r[5].date() if pd.notna(r[5]) else None),
-                      n(r[6])] for r in res.itertuples()],
-                    align="lllllr", max_rows=10), unsafe_allow_html=True)
+                tabel("wk_resign", "Karyawan resign",
+                      f"{label_periode} · {label_site}",
+                      ["Karyawan", "Posisi", "Site", "Tanggal resign",
+                       "Akhir kontrak", "Level"],
+                      [[theme.esc(r[1]), theme.esc(r[2]), theme.esc(r[3]),
+                        theme.esc(r[4].date() if pd.notna(r[4]) else None),
+                        theme.esc(r[5].date() if pd.notna(r[5]) else None),
+                        n(r[6])] for r in res.itertuples()], align="lllllr")
 
 
 # ===========================================================================
@@ -639,10 +740,10 @@ def page_prf():
                 f"· {theme.esc(r.level_type)}</span>",
                 theme.esc(r.tracking), theme.esc(r.status),
             ])
-        st.markdown(theme.data_table(
-            ["Request Number", "PRF Class", "Qty", "Position Name", "Site",
-             "Divisi", "Level", "Tracking PRF", "Status PRF"],
-            baris, align="llrlllll" + "l", max_rows=10), unsafe_allow_html=True)
+        tabel("prf_tabel", "PRF Tracking", label_filter,
+              ["Request Number", "PRF Class", "Qty", "Position Name", "Site",
+               "Divisi", "Level", "Tracking PRF", "Status PRF"],
+              baris, align="llrllllll")
         st.markdown(theme.inline_note(
             "Kolom <b>Request Number</b> memakai ID PRF kalau nomor requestnya belum "
             "terbit — satu kolom identitas, bukan dua kolom yang separuhnya kosong.",
