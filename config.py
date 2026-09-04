@@ -391,6 +391,8 @@ RECRUITER_NAMES = {
     "PURANTI NURPARIDA": "Puranti Nurparida",     # sebagian baris sudah nama penuh
     "AWL": "Awaluddin",
     "DIV": "Alfina Diva Ramadhanty",
+    "Alfina Diva Ramadhanty":"Alfina Diva Ramadhanty",
+    "Shaumy Fadhila":"Shaumy Fadhila"
     "FLI": "Muhammad Rafli",
     "UMY": "Shaumy Fadhila",
     "SHA": "Shaumy Fadhila",                      # varian lama
