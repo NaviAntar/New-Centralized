@@ -109,6 +109,11 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
     # position_name / departement / level / loc adalah lookup yang belum ditarik
     # ke bawah untuk baris baru. Kalau dibiarkan, kandidat SSCP tercatat tanpa
     # site (dan dulu ikut terhitung sebagai BPN) dan tanpa departemen.
+    # fix_centralized tidak punya kolom nomor telepon sama sekali; kolomnya
+    # disiapkan kosong supaya penambal identitas punya tempat mengisinya dari
+    # sheet Backend Monitoring.
+    if "phone" not in df.columns:
+        df["phone"] = None
     df = _tambal_identitas(df)
 
     if "loc" in df.columns:
@@ -143,6 +148,12 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
 
     df["level"] = df.get("level").fillna(C.LEVEL_FALLBACK) if "level" in df.columns else C.LEVEL_FALLBACK
 
+    # Talent pool ditandai lewat kolom Result di tahap mana pun, bukan lewat satu
+    # kolom khusus — form Apps Script menuliskannya di tahap tempat keputusan itu
+    # diambil, dan tahapnya berbeda-beda per orang.
+    df["talent_pool"] = _talent_pool_mask(df)
+    df["talent_pool_stage"] = _talent_pool_stage(df)
+
     # Kolom departemen dibereskan di satu tempat, sebelum dipakai halaman mana
     # pun — kalau tidak, tiap laporan harus mengulang perbaikan yang sama.
     if "departement" in df.columns:
@@ -151,7 +162,7 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
 
 
 _ROW_MASTER: dict = {}
-_TAMBAL_KOLOM = ("position_name", "departement", "level", "loc")
+_TAMBAL_KOLOM = ("position_name", "departement", "level", "loc", "phone")
 
 
 def set_row_master(bm: "pd.DataFrame | None") -> None:
@@ -204,6 +215,61 @@ def set_position_master(master: dict | None) -> None:
     """Pasang master posisi -> departemen. Panggil sekali saat startup."""
     global _POSITION_MASTER
     _POSITION_MASTER = master or {"by_id": {}, "by_name": {}, "valid": set()}
+
+
+# Kolom Result tiap tahap, dipakai mendeteksi talent pool. Diambil dari peta
+# tahap supaya tidak ada daftar kolom kedua yang bisa ketinggalan saat peta
+# tahapnya berubah.
+_RESULT_COLS = [r for *_x, r in STAGE_COLUMNS.values() if r]
+
+
+def _talent_pool_mask(df: pd.DataFrame) -> pd.Series:
+    """True kalau ada tahap yang hasilnya TALENT POOL."""
+    hasil = pd.Series(False, index=df.index)
+    for kol in _RESULT_COLS:
+        if kol in df.columns:
+            nilai = df[kol].astype(str).str.strip().str.upper()
+            hasil |= nilai.eq(C.TALENT_POOL_RESULT)
+    return hasil
+
+
+def _talent_pool_stage(df: pd.DataFrame) -> pd.Series:
+    """Tahap tempat kandidat masuk talent pool — tahap TERAKHIR yang menandainya.
+
+    Dipakai di tabel Talent Pool: "berhenti di Interview User" memberi tahu
+    seberapa jauh orangnya sudah dinilai, dan itu yang menentukan seberapa siap
+    dia dipanggil lagi.
+    """
+    hasil = pd.Series(pd.NA, index=df.index, dtype=object)
+    for tahap, (*_x, kol) in STAGE_COLUMNS.items():
+        if not kol or kol not in df.columns:
+            continue
+        cocok = df[kol].astype(str).str.strip().str.upper().eq(C.TALENT_POOL_RESULT)
+        hasil = hasil.mask(cocok, tahap)
+    return hasil
+
+
+def talent_pool(df: pd.DataFrame, sites=None) -> pd.DataFrame:
+    """Daftar kandidat talent pool, siap ditampilkan.
+
+    Kolomnya sesuai permintaan Navi — nama, nomor HP, posisi yang dilamar,
+    departemen — ditambah tiga yang membuat daftarnya bisa langsung dipakai
+    menelepon orang: SITE (menentukan siapa yang menghubungi), LEVEL (menentukan
+    posisi apa yang pantas ditawarkan), dan TAHAP tempat dia masuk pool (semakin
+    jauh tahapnya, semakin sedikit seleksi ulang yang perlu diulang).
+    """
+    d = df[df["talent_pool"]].copy()
+    if sites:
+        d = d[d["loc"].isin(C.loc_values_for(sites))]
+    if d.empty:
+        return pd.DataFrame(columns=["cand_key", "candidate_id", "phone",
+                                     "position_name", "departement", "loc",
+                                     "level", "stage"])
+    d["stage"] = d["talent_pool_stage"]
+    kol = ["cand_key", "candidate_id", "phone", "position_name", "departement",
+           "loc", "level", "stage"]
+    return d[[c for c in kol if c in d.columns]].sort_values(
+        ["loc", "departement", "candidate_id"])
 
 
 def repair_department(df: pd.DataFrame) -> pd.Series:
@@ -508,13 +574,12 @@ def source_effectiveness(df: pd.DataFrame) -> pd.DataFrame:
 # Performance recruiter — tabel di halaman Weekly Report
 # ===========================================================================
 def recruiter_name(initial: str, extra_map: dict | None = None) -> str | None:
-    """Inisial di database -> nama lengkap. None kalau tidak ada di roster."""
-    if not initial:
-        return None
-    mapping = dict(C.RECRUITER_NAMES)
-    if extra_map:
-        mapping.update({k.strip().upper(): v for k, v in extra_map.items() if k and v})
-    return mapping.get(str(initial).strip().upper())
+    """Isi kolom PIC -> nama di roster. None kalau bukan orang roster.
+
+    Logikanya ada di config.resolve_recruiter(): kolom PIC berisi campuran
+    inisial lama dan nama lengkap dengan ejaan yang tidak seragam.
+    """
+    return C.resolve_recruiter(initial, extra_map)
 
 
 def recruiter_owned(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.DataFrame:
@@ -671,9 +736,23 @@ def headline(df: pd.DataFrame, lt: pd.DataFrame) -> dict:
                & lt["lt_elapsed"].notna() & (lt["lt_elapsed"] > 0)]
     scored = staff[staff["lt_status"].isin(["Onbudget", "Overbudget"])]
     counts = df["status1"].value_counts()
+
+    # CLOSE sekarang punya dua arti. Sejak talent pool dipakai, sebuah proses
+    # bisa "selesai" karena orangnya masuk kerja ATAU karena orangnya disimpan
+    # untuk kebutuhan berikutnya. Menjumlahkan keduanya membuat pencapaian
+    # rekrutmen terlihat lebih besar dari kenyataan, jadi dipisah di sini.
+    tutup = df["status1"] == "CLOSE"
+    pool = df["talent_pool"] if "talent_pool" in df.columns else pd.Series(
+        False, index=df.index)
     return {
         "candidates": len(df),
-        "hired": int(counts.get("CLOSE", 0)),
+        "hired": int((tutup & ~pool).sum()),
+        "close_total": int(counts.get("CLOSE", 0)),
+        # Seluruh orang di pool, apa pun status1-nya: sebagian baris masih
+        # tertulis OPEN di sheet karena statusnya belum ditutup, padahal
+        # keputusannya sudah diambil di kolom Result.
+        "talent_pool": int(pool.sum()),
+        "close_talent_pool": int((tutup & pool).sum()),
         "open": int(counts.get("OPEN", 0)),
         "failed": int(counts.get("FAILED", 0)),
         "median_lt": float(staff["lt_elapsed"].median()) if len(staff) else None,
@@ -1113,3 +1192,228 @@ def prf_summary(df: pd.DataFrame) -> dict:
         "close": close,
         "close_pct": persen(close),
     }
+
+
+# ===========================================================================
+# Jelajah posisi — tiga cara masuk ke data yang sama
+# ===========================================================================
+# Halaman Tracking Posisi dulu hanya bisa dimasuki lewat nama posisi. Itu
+# menjawab "bagaimana posisi X?" tapi tidak menjawab "di site ini yang lagi
+# jalan apa saja?" — padahal itu pertanyaan pertama yang biasanya diajukan.
+#
+# Ketiganya membaca data yang sama dan memakai definisi yang sama:
+#   ongoing = status1 OPEN        proses masih berjalan
+#   hired   = CLOSE, bukan talent pool
+#   pool    = talent pool         lolos tapi belum ditempatkan
+#   gagal   = FAILED
+def _ringkas(d: pd.DataFrame) -> dict:
+    pool = d["talent_pool"] if "talent_pool" in d.columns else pd.Series(
+        False, index=d.index)
+    tutup = d["status1"] == "CLOSE"
+    return {
+        "kandidat": int(d["cand_key"].nunique()),
+        "ongoing": int((d["status1"] == "OPEN").sum()),
+        "hired": int((tutup & ~pool).sum()),
+        "pool": int(pool.sum()),
+        "gagal": int((d["status1"] == "FAILED").sum()),
+    }
+
+
+def _terpakai(df: pd.DataFrame, sites=None, departemen=None) -> pd.DataFrame:
+    d = df
+    if sites:
+        d = d[d["loc"].isin(C.loc_values_for(sites))]
+    if departemen:
+        d = d[d["departement"].isin(list(departemen))]
+    return d
+
+
+def site_summary(df: pd.DataFrame, sites=None) -> pd.DataFrame:
+    """Satu baris per site: berapa departemen, posisi, dan kandidat yang jalan."""
+    d = _terpakai(df, sites)
+    if d.empty:
+        return pd.DataFrame(columns=["site", "departemen", "posisi", "kandidat",
+                                     "ongoing", "hired", "pool", "gagal"])
+    baris = []
+    for site, g in d.groupby("loc", dropna=False):
+        baris.append({
+            "site": site or "—",
+            "departemen": g["departement"].nunique(),
+            "posisi": g["position_name"].nunique(),
+            **_ringkas(g),
+        })
+    return pd.DataFrame(baris).sort_values("kandidat", ascending=False)
+
+
+def department_summary(df: pd.DataFrame, sites=None) -> pd.DataFrame:
+    """Satu baris per departemen — dasar mode Per Site dan Per Departemen."""
+    d = _terpakai(df, sites)
+    if d.empty:
+        return pd.DataFrame(columns=["departement", "posisi", "kandidat",
+                                     "ongoing", "hired", "pool", "gagal"])
+    baris = []
+    for dep, g in d.groupby("departement", dropna=False):
+        baris.append({
+            "departement": dep or "—",
+            "posisi": g["position_name"].nunique(),
+            **_ringkas(g),
+        })
+    out = pd.DataFrame(baris)
+    # Diurutkan dari yang paling banyak SEDANG BERJALAN, bukan dari total: yang
+    # dicari orang di halaman ini adalah pekerjaan yang masih harus dikerjakan.
+    return out.sort_values(["ongoing", "kandidat"], ascending=False)
+
+
+def position_summary(df: pd.DataFrame, departemen=None, sites=None) -> pd.DataFrame:
+    """Satu baris per posisi di dalam satu departemen."""
+    d = _terpakai(df, sites, [departemen] if isinstance(departemen, str) else departemen)
+    if d.empty:
+        return pd.DataFrame(columns=["position_name", "loc", "level", "kandidat",
+                                     "ongoing", "hired", "pool", "gagal"])
+    baris = []
+    for (pos, loc), g in d.groupby(["position_name", "loc"], dropna=False):
+        baris.append({
+            "position_name": pos or "—",
+            "loc": loc or "—",
+            "level": g["level"].mode().iat[0] if len(g["level"].mode()) else "—",
+            **_ringkas(g),
+        })
+    return pd.DataFrame(baris).sort_values(["ongoing", "kandidat"], ascending=False)
+
+
+def ongoing_candidates(df: pd.DataFrame, lt: pd.DataFrame, departemen=None,
+                       sites=None, position_name=None) -> pd.DataFrame:
+    """Kandidat yang prosesnya masih berjalan, siap ditampilkan apa adanya."""
+    d = _terpakai(df, sites, [departemen] if isinstance(departemen, str) else departemen)
+    d = d[d["status1"] == "OPEN"]
+    if position_name:
+        d = d[d["position_name"] == position_name]
+    if d.empty:
+        return pd.DataFrame(columns=["candidate_id", "position_name", "loc",
+                                     "level", "last_progress", "lt_elapsed"])
+    d = d.merge(lt[["cand_key", "lt_elapsed"]], on="cand_key", how="left")
+    kol = ["candidate_id", "position_name", "loc", "level", "last_progress",
+           "lt_elapsed"]
+    return d[kol].sort_values(["position_name", "candidate_id"])
+
+
+# ===========================================================================
+# Monitoring — pengganti membaca spreadsheet mentah
+# ===========================================================================
+# Sheet aslinya 100+ kolom: tiap tahap punya start, done, LT, budget, LT
+# contribution, variance, reason, dan result. Delapan kolom per tahap dikali dua
+# belas tahap adalah alasan orang berhenti membacanya dan mulai men-scroll
+# sembarangan.
+#
+# Di sini yang selalu tampil hanya identitas + posisi terakhir + status. Tahap
+# ditambahkan sendiri oleh pembaca, dan tiap tahap hanya membawa DUA kolom: LT
+# dan hasil SLA-nya. Kolom variance dan LT contribution sengaja tidak dibawa —
+# keduanya turunan dari LT dan budget yang sudah tampil, jadi tidak menambah apa
+# pun selain lebar.
+MONITORING_STAGE_COLS = ("LT", "SLA")
+
+
+def monitoring_pic(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.Series:
+    """cand_key -> PIC Screening CV (nama lengkap).
+
+    Screening CV dipakai sebagai penanda kepemilikan, sama seperti di tabel
+    Performance: tiap kandidat punya tepat satu PIC screening, jadi filter PIC di
+    halaman ini menghasilkan angka yang sama dengan tabel Performance.
+    """
+    scr = sf[(sf["stage"] == "Screening CV") & sf["pic_initial"].notna()]
+    nama = scr["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
+    nama = nama.fillna(C.OTHER_RECRUITER_LABEL)
+    return pd.Series(nama.values, index=scr["cand_key"].values).groupby(level=0).first()
+
+
+def monitoring_table(df: pd.DataFrame, sf: pd.DataFrame, lt: pd.DataFrame,
+                     stages: list[str] | None = None,
+                     extra_map: dict | None = None) -> pd.DataFrame:
+    """Tabel monitoring: inti selalu ada, tahap ditambahkan sesuai permintaan."""
+    pic = monitoring_pic(sf, extra_map)
+    out = df[["cand_key", "candidate_id", "position_name", "departement", "loc",
+              "level", "last_progress", "status1", "talent_pool"]].copy()
+    out["pic"] = out["cand_key"].map(pic).fillna("—")
+    out = out.merge(lt[["cand_key", "lt_elapsed", "stages_late"]],
+                    on="cand_key", how="left")
+
+    # Status yang dipakai di layar memisahkan dua arti CLOSE, sama seperti di
+    # Overview — supaya orang tidak perlu mengingat bahwa CLOSE bisa berarti dua
+    # hal yang berbeda.
+    out["status"] = out["status1"]
+    out.loc[out["talent_pool"], "status"] = "TALENT POOL"
+
+    for tahap in (stages or []):
+        blok = sf[sf["stage"] == tahap].set_index("cand_key")
+        out[f"{tahap} · LT"] = out["cand_key"].map(blok["lt"])
+        out[f"{tahap} · SLA"] = out["cand_key"].map(blok["sla"]).replace(
+            {"": None}).fillna("—")
+    return out
+
+
+def filter_monitoring(d: pd.DataFrame, sites=None, pics=None, departemen=None,
+                      statuses=None, levels=None, level_types=None) -> pd.DataFrame:
+    """Filter halaman monitoring. Daftar kosong berarti 'semua'."""
+    staf = {s.strip().lower() for s in C.PRF_STAFF_LEVELS}
+    if sites:
+        d = d[d["loc"].isin(C.loc_values_for(sites))]
+    if pics:
+        d = d[d["pic"].isin(list(pics))]
+    if departemen:
+        d = d[d["departement"].isin(list(departemen))]
+    if statuses:
+        d = d[d["status"].isin(list(statuses))]
+    if levels:
+        d = d[d["level"].isin(list(levels))]
+    if level_types:
+        jenis = d["level"].astype(str).str.strip().str.lower().map(
+            lambda v: "Staff" if v in staf else "Non Staff")
+        d = d[jenis.isin(list(level_types))]
+    return d
+
+
+# ---------------------------------------------------------------------------
+# Filter bulan berbasis tanggal Screening CV
+# ---------------------------------------------------------------------------
+# Screening CV dipakai sebagai patokan periode di seluruh portal: itu tanggal
+# kandidat masuk proses, jadi satu kandidat selalu utuh dalam satu bulan. Kalau
+# patokannya tanggal tahap terakhir, orang yang sama pindah-pindah bulan setiap
+# prosesnya maju, dan angka bulan lalu berubah sendiri.
+def screening_month(df: pd.DataFrame, sf: pd.DataFrame) -> pd.Series:
+    """cand_key -> Timestamp awal bulan screening CV-nya."""
+    scr = sf[sf["stage"] == "Screening CV"][["cand_key", "screening_date"]]
+    scr = scr.dropna(subset=["screening_date"]).drop_duplicates("cand_key")
+    peta = dict(zip(scr["cand_key"], scr["screening_date"].dt.to_period("M")))
+    return df["cand_key"].map(peta)
+
+
+def month_options(df: pd.DataFrame, sf: pd.DataFrame) -> list[str]:
+    """Daftar bulan yang benar-benar ada datanya, terbaru dulu."""
+    per = screening_month(df, sf).dropna().unique()
+    return [f"{BULAN_NAMA[p.month]} {p.year}" for p in sorted(per, reverse=True)]
+
+
+def filter_month(df: pd.DataFrame, sf: pd.DataFrame, labels) -> pd.DataFrame:
+    """Saring kandidat ke bulan-bulan yang dipilih. Kosong berarti semua."""
+    if not labels:
+        return df
+    mau = set()
+    for lab in labels:
+        nama, tahun = str(lab).rsplit(" ", 1)
+        mau.add(pd.Period(year=int(tahun), month=BULAN_NAMA_BALIK[nama], freq="M"))
+    return df[screening_month(df, sf).isin(mau)]
+
+
+def last_progress_breakdown(d: pd.DataFrame) -> list[tuple[str, int]]:
+    """Sebaran tahap terakhir kandidat yang masih berjalan, urut proses.
+
+    Diurutkan mengikuti urutan tahap, bukan besar-kecil angkanya: yang dicari
+    orang adalah "macetnya di mana", dan itu hanya terbaca kalau tahapnya berdiri
+    di urutan yang sama dengan perjalanan aslinya.
+    """
+    jalan = d[d["status1"] == "OPEN"]
+    if jalan.empty:
+        return []
+    hitung = jalan["last_progress"].fillna("Belum mulai").value_counts().to_dict()
+    urut = {t: i for i, t in enumerate(STAGE_ORDER)}
+    return sorted(hitung.items(), key=lambda kv: urut.get(kv[0], 99))

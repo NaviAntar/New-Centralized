@@ -388,18 +388,65 @@ def applicable_stages(level: str) -> list[str]:
 RECRUITER_NAMES = {
     "PURI": "Puranti Nurparida",
     "PUR": "Puranti Nurparida",                   # varian lama di sebagian baris
-    "PURANTI NURPARIDA": "Puranti Nurparida",     # sebagian baris sudah nama penuh
     "AWL": "Awaluddin",
     "DIV": "Alfina Diva Ramadhanty",
-    "Alfina Diva Ramadhanty":"Alfina Diva Ramadhanty",
-    "Shaumy Fadhila":"Shaumy Fadhila",
     "FLI": "Muhammad Rafli",
     "UMY": "Shaumy Fadhila",
     "SHA": "Shaumy Fadhila",                      # varian lama
     # Di database tertulis FAQ, bukan FAW — itu sebabnya barisnya kosong.
     "FAQ": "Muhammad Faiq Kenzie Widodo",
-    "MUHAMMAD FAIQ KENZIE WIDODO": "Muhammad Faiq Kenzie Widodo",
 }
+
+
+def _kunci_nama(value) -> str:
+    """Nama jadi bentuk banding: huruf kecil, tanpa tanda baca, satu spasi."""
+    import re as _re
+    return _re.sub(r"[^a-z ]+", "", str(value or "").lower()).strip()
+
+
+def resolve_recruiter(value, extra: dict | None = None) -> str | None:
+    """Isi kolom PIC -> nama di roster. None kalau bukan orang roster.
+
+    Kolom PIC pernah berisi inisial dan sekarang berisi nama lengkap, karena form
+    Apps Script menulis nama. Ejaannya pun tidak selalu sama — di database ada
+    "SHAUMY FADHILA" dan "SHAUMY FADILAH", "ALFINA DIVA RAMADHANTY" dan
+    "ALFINA DIVA". Mendaftar tiap ejaan satu per satu tidak akan pernah selesai,
+    jadi urutannya:
+
+      1. Cocokkan ke nama roster apa adanya (abaikan besar-kecil & tanda baca).
+      2. Cocokkan ke peta inisial di atas.
+      3. Cocokkan lewat NAMA DEPAN, tapi hanya kalau nama depan itu cuma dimiliki
+         satu orang di roster. "Shaumy" hanya satu orang, jadi "SHAUMY FADILAH"
+         aman dipulangkan ke Shaumy Fadhila. "Muhammad" dimiliki dua orang, jadi
+         nama depan saja sengaja TIDAK cukup — lebih baik masuk "Recruiter lain"
+         daripada dikreditkan ke orang yang salah.
+    """
+    if not is_valid_initial(value):
+        return None
+
+    peta_nama = {_kunci_nama(n): n for n in RECRUITER_ROSTER}
+    peta_inisial = {k.strip().upper(): v for k, v in RECRUITER_NAMES.items()}
+    if extra:
+        for k, v in extra.items():
+            if not k or not v:
+                continue
+            peta_inisial[str(k).strip().upper()] = v
+            peta_nama[_kunci_nama(v)] = v
+
+    kunci = _kunci_nama(value)
+    if kunci in peta_nama:
+        return peta_nama[kunci]
+
+    tepat = peta_inisial.get(str(value).strip().upper())
+    if tepat:
+        return tepat
+
+    depan = kunci.split(" ")[0] if kunci else ""
+    if len(depan) >= 4:
+        cocok = {n for k, n in peta_nama.items() if k.split(" ")[0] == depan}
+        if len(cocok) == 1:
+            return cocok.pop()
+    return None
 
 
 def is_valid_initial(value) -> bool:
@@ -458,6 +505,21 @@ DEPT_ALIASES = {
     "Digital Transformation & Information Technology":
         "Information Technology & Digital Transformation",
 }
+
+# ===========================================================================
+# TALENT POOL
+# ===========================================================================
+# Kandidat yang lolos seleksi tapi belum ditempatkan: bagus, hanya saja
+# posisinya sudah terisi orang lain atau kebutuhannya belum ada. Ditandai lewat
+# kolom Result di tahap mana pun oleh form Apps Script.
+#
+# Dampaknya ke arti CLOSE: sebuah proses sekarang bisa berakhir dengan DUA cara
+# yang sama-sama "selesai" tapi sangat berbeda maknanya —
+#   · Close Onboarding  orangnya masuk kerja
+#   · Close Talent Pool orangnya disimpan untuk kebutuhan berikutnya
+# Menjumlahkan keduanya jadi satu angka "hire" membuat pencapaian rekrutmen
+# terlihat lebih besar dari kenyataan, jadi di portal keduanya dipisah.
+TALENT_POOL_RESULT = "TALENT POOL"
 
 # Nama yang tampil sebagai baris tersendiri di tabel Performance, sesuai urutan
 # yang Navi berikan. Nama tanpa inisial tetap muncul (nilai nol) supaya terlihat

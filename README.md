@@ -455,3 +455,121 @@ Tabel Tahap seleksi memakai penampil sendiri (`theme.stage_table`) karena tiap
 barisnya berisi lencana status, tapi tetap bisa diunduh lewat `app.unduh_saja()`.
 Di berkasnya lencana jadi teks — di Excel dan di gambar, warna saja tidak cukup
 untuk menyampaikan "Late".
+
+## Talent pool
+
+Kandidat yang lolos seleksi tapi belum ditempatkan — posisinya sudah terisi orang
+lain, atau kebutuhannya belum ada. Ditandai lewat kolom **Result** di tahap mana
+pun oleh form Apps Script, bukan lewat satu kolom khusus: keputusan itu diambil
+di tahap yang berbeda-beda per orang.
+
+**Dampaknya ke arti CLOSE.** Sebuah proses sekarang bisa berakhir dengan dua cara
+yang sama-sama "selesai" tapi sangat berbeda maknanya:
+
+| | Artinya |
+|---|---|
+| Close — Onboarding | orangnya masuk kerja |
+| Talent pool | orangnya disimpan untuk kebutuhan berikutnya |
+
+Menjumlahkan keduanya jadi satu angka "hire" membuat pencapaian rekrutmen
+terlihat lebih besar dari kenyataan, jadi di Overview keduanya berdiri sendiri.
+Kartu Talent pool menghitung **semua** orang di pool apa pun `status1`-nya —
+sebagian baris masih tertulis OPEN di sheet padahal keputusannya sudah diambil di
+kolom Result.
+
+**Tabelnya hidup di Recruitment Room**, bukan di Overview: di Overview orang cuma
+melihat angkanya, di Recruitment Room orang menindaklanjutinya — dan nomor HP-nya
+justru berguna saat filter site/PIC sudah dipersempit. Daftarnya ikut seluruh
+filter halaman itu.
+
+Isinya nama, nomor HP, posisi yang dilamar, dan departemen sesuai permintaan, ditambah tiga kolom yang membuatnya bisa langsung dipakai menelepon
+orang: **Site** (siapa yang menghubungi), **Level** (posisi apa yang pantas
+ditawarkan), dan **Tahap** tempat dia masuk pool (semakin jauh tahapnya, semakin
+sedikit seleksi yang perlu diulang).
+
+Nomor HP diambil dari kolom `No Telpon` di `Report › Backend Monitoring` —
+`fix_centralized` tidak punya kolomnya sama sekali.
+
+## Tracking Posisi — dua mode
+
+| Mode | Menjawab |
+|---|---|
+| **Per Posisi** (default) | "posisi X isinya siapa?" |
+| Per Departemen | "departemen saya sudah sampai mana?" |
+
+Mode Site dihapus: pertanyaannya sudah terjawab oleh filter Site yang berlaku di
+kedua mode, dan mode ketiga hanya menambah pilihan tanpa menambah jawaban.
+
+Pemilih modenya `st.segmented_control`, bukan radio bertitik — dua pilihan yang
+saling meniadakan lebih terbaca sebagai dua tombol berdampingan.
+
+**Filter bersama kedua mode:** bulan (multi-pilih, patokannya tanggal
+**Screening CV**) dan site. Screening CV dipakai sebagai patokan periode di
+seluruh portal karena itu tanggal kandidat masuk proses, jadi satu kandidat
+selalu utuh dalam satu bulan. Kalau patokannya tanggal tahap terakhir, orang yang
+sama pindah-pindah bulan setiap prosesnya maju, dan angka bulan lalu berubah
+sendiri.
+
+**Mode Per Departemen bertingkat, bukan tabel.** Pilih departemen di dropdown →
+ringkasannya muncul (kartu + batang sebaran + chip "yang masih berjalan berhenti
+di mana") → di bawahnya posisi yang dibuka, satu per satu bisa dibuka untuk
+melihat sebaran dan siapa yang sedang diproses. Melihat semua posisi sekaligus
+sebagai tabel bukan tracking, cuma daftar.
+
+Yang tampil lebih dulu hanya posisi yang **masih ada orangnya jalan** — itu arti
+"posisi yang dibuka". Plant & Maintenance punya 79 posisi tercatat dan hanya 35
+yang masih berjalan; ada tombol untuk memunculkan sisanya.
+
+**Komponen visual baru** menggantikan deretan kolom angka:
+
+* `theme.split_bar()` — batang bertumpuk + legenda angkanya. Proporsi jauh lebih
+  cepat dibaca sebagai panjang daripada sebagai lima kolom angka. Sisa yang tidak
+  masuk empat kategori (hampir semuanya HOLD) ikut digambar sebagai "lainnya" —
+  celah abu yang tidak dijelaskan selalu dibaca sebagai bug.
+* `theme.chip_row()` — sebaran last progress sebagai chip. Sebagai tabel, sepuluh
+  baris dipakai untuk memberi tahu bahwa kebanyakan bernilai nol; sebagai chip,
+  yang nol tidak ditulis sama sekali.
+* `theme.stat_inline()` — angka ringkas sebaris untuk ruang sempit di dalam
+  expander.
+
+## Recruitment Room — monitoring, bukan embed
+
+Embed form Apps Script sudah dihapus. Alasannya bukan teknis: form itu memang
+untuk **mengisi**, dan mengisi lebih enak di tab sendiri yang lebar. Yang tidak
+bisa dilakukan form adalah **melihat** — dan itu yang selama ini memaksa tim
+kembali ke spreadsheet mentah. Halaman ini mengambil alih bagian melihatnya.
+
+**Atas: tabel monitoring.** Enam filter (Site · PIC · Departemen · Status · Level
+· Jenis level), semuanya default "semua". Kolom inti yang selalu tampil: kandidat,
+posisi, site, departemen, level, PIC, tahap terakhir, status, SLA.
+
+Sheet aslinya punya **delapan kolom per tahap** — start, done, LT, budget, LT
+contribution, variance, reason, result — dan itu yang membuatnya berhenti
+terbaca. Di portal, tahap ditambahkan sendiri lewat "Tambah kolom tahap", dan
+tiap tahap hanya membawa **LT** dan **SLA**. Variance dan LT contribution tidak
+dibawa karena keduanya turunan dari LT dan budget yang sudah tampil.
+
+**PIC** diambil dari PIC Screening CV, dasar yang sama dengan tabel Performance,
+jadi angka di dua halaman itu bisa dibandingkan langsung.
+
+**Bawah: daftar link** form dan spreadsheet per site, masing-masing bisa disalin
+atau dibuka di tab baru.
+
+## PIC: nama lengkap, bukan lagi inisial
+
+Kolom `*_by` dulu berisi inisial tiga huruf; form Apps Script sekarang menulis
+**nama lengkap**, dan ejaannya tidak seragam — di database ada "SHAUMY FADHILA"
+dan "SHAUMY FADILAH", "ALFINA DIVA RAMADHANTY" dan "ALFINA DIVA". Karena peta
+lama hanya berisi inisial, empat recruiter tercatat nol padahal datanya ada.
+
+`config.resolve_recruiter()` menggantikan peta itu, dengan urutan:
+
+1. cocokkan ke nama roster apa adanya (abaikan besar-kecil dan tanda baca);
+2. cocokkan ke peta inisial;
+3. cocokkan lewat **nama depan**, tapi hanya kalau nama depan itu cuma dimiliki
+   satu orang di roster. "Shaumy" unik, jadi "SHAUMY FADILAH" aman dipulangkan.
+   "Muhammad" dimiliki dua orang, jadi nama depan saja sengaja tidak cukup —
+   lebih baik masuk "Recruiter lain" daripada dikreditkan ke orang yang salah.
+
+Diverifikasi terhadap hitungan langsung dari sheet: kedelapan baris tabel
+Performance cocok persis, selisih nol.

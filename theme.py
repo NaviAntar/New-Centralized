@@ -78,6 +78,7 @@ STATUS = {
 # Warna hasil akhir kandidat. Mengambil dari STATUS supaya arti "hijau = baik"
 # konsisten di seluruh aplikasi — badge, tabel, dan chart memakai peta ini.
 RESULT_COLORS = {
+    "TALENT POOL": BRAND["orange"],
     "CLOSE": STATUS["good"],    # onboarding — hire berhasil
     "OPEN": STATUS["warn"],     # masih berjalan
     "FAILED": STATUS["bad"],
@@ -87,6 +88,9 @@ RESULT_COLORS = {
 
 RESULT_LABEL = {
     "CLOSE": "Hired",
+    # Talent pool berdiri sendiri, bukan varian Hired: orangnya lolos seleksi
+    # tapi belum ditempatkan, dan menyebutnya "Hired" akan salah.
+    "TALENT POOL": "Talent Pool",
     "OPEN": "On Progress",
     "FAILED": "Failed",
     "HOLD": "Hold",
@@ -1879,6 +1883,45 @@ div[class*="st-key-unduh_"] button:hover {{
 }}
 div[class*="st-key-unduh_"] {{ margin-bottom: -6px; }}
 
+/* Batang bertumpuk + legenda: proporsi dibaca sebagai panjang, angkanya tetap
+   tertulis di legenda. */
+.dh-splitbar {{ margin: 2px 0 4px; }}
+.dh-sb-track {{
+  display: flex; height: 9px; border-radius: 99px; overflow: hidden;
+  background: {NEUTRAL["border_soft"]};
+}}
+.dh-sb-track span {{ display: block; height: 100%; }}
+.dh-sb-legend {{
+  display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
+  font-size: 11.5px; color: {NEUTRAL["text_muted"]};
+}}
+.dh-sb-item {{ display: inline-flex; align-items: center; gap: 6px; }}
+.dh-sb-item i {{ width: 8px; height: 8px; border-radius: 3px; display: inline-block; }}
+.dh-sb-item b {{ color: {NEUTRAL["text"]}; font-weight: 800; }}
+.dh-splitbar-empty {{ font-size: 12px; color: {NEUTRAL["text_soft"]}; }}
+
+/* Chip sebaran — yang nilainya nol tidak ditulis sama sekali. */
+.dh-chiprow {{ display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }}
+.dh-chip {{
+  display: inline-flex; align-items: center; gap: 5px;
+  background: {NEUTRAL["wash"]}; border: 1px solid {NEUTRAL["border"]};
+  border-radius: 99px; padding: 3px 10px; font-size: 11.5px;
+  color: {NEUTRAL["text_muted"]};
+}}
+.dh-chip b {{ color: var(--chip); font-weight: 800; font-size: 12px; }}
+
+/* Angka ringkas sebaris. */
+.dh-statinline {{ display: flex; flex-wrap: wrap; gap: 18px; margin: 2px 0 8px; }}
+.dh-si {{ display: inline-flex; align-items: baseline; gap: 6px; }}
+.dh-si b {{ font-size: 17px; font-weight: 800; color: {NEUTRAL["text"]}; }}
+.dh-si span {{ font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: {NEUTRAL["text_soft"]}; font-weight: 700; }}
+
+/* Pemilih mode: pil, bukan titik radio. */
+div[class*="st-key-modebar"] [data-testid="stSegmentedControl"] button {{
+  font-weight: 700 !important; font-size: 13px !important;
+}}
+
 /* expander */
 [data-testid="stExpander"] details {{
   background: {NEUTRAL["card"]} !important;
@@ -1942,6 +1985,58 @@ def data_table(headers: list[str], rows: list[list], align: str | None = None,
     return (f'<div class="dh-tablewrap"{gaya}><table class="dh-table dh-portal">'
             f"<thead><tr>{thead}</tr></thead><tbody>{''.join(body)}{tot}</tbody>"
             f"</table></div>{kaki}")
+
+
+def split_bar(segmen: list[tuple[str, int, str]], total: int | None = None) -> str:
+    """Satu batang bertumpuk + legenda angkanya.
+
+    Dipakai menggantikan baris tabel berisi lima kolom angka. Proporsi jauh lebih
+    cepat dibaca sebagai panjang daripada sebagai deretan angka — pertanyaan
+    "departemen ini sudah sejauh mana" terjawab dalam sekali lihat, dan angkanya
+    tetap ada di legenda untuk yang perlu tepat.
+
+    segmen: [(label, nilai, warna), ...]
+    """
+    total = total if total is not None else sum(v for _l, v, _c in segmen)
+    if not total:
+        return '<div class="dh-splitbar-empty">Belum ada kandidat</div>'
+
+    potong = "".join(
+        f'<span style="width:{v / total * 100:.4f}%;background:{c}" title="{html.escape(l)}: {v}"></span>'
+        for l, v, c in segmen if v
+    )
+    legenda = "".join(
+        f'<span class="dh-sb-item"><i style="background:{c}"></i>'
+        f'<b>{v}</b> {html.escape(l)}</span>'
+        for l, v, c in segmen if v
+    )
+    return (f'<div class="dh-splitbar"><div class="dh-sb-track">{potong}</div>'
+            f'<div class="dh-sb-legend">{legenda}</div></div>')
+
+
+def chip_row(items: list[tuple[str, int]], warna: str | None = None) -> str:
+    """Deretan chip "label · angka" — untuk sebaran yang kategorinya banyak.
+
+    Sebaran last progress punya sepuluh lebih kategori dan sebagian besar bernilai
+    nol. Sebagai tabel, sepuluh baris itu memakan layar untuk memberi tahu bahwa
+    kebanyakan kosong. Sebagai chip, yang nol tidak ditulis sama sekali.
+    """
+    warna = warna or BRAND["orange"]
+    if not items:
+        return '<div class="dh-secnote">Tidak ada tahap berjalan</div>'
+    isi = "".join(
+        f'<span class="dh-chip"><b>{v}</b> {html.escape(str(l))}</span>'
+        for l, v in items if v
+    )
+    return f'<div class="dh-chiprow" style="--chip:{warna}">{isi}</div>'
+
+
+def stat_inline(items: list[tuple[str, str]]) -> str:
+    """Angka ringkas sebaris — pengganti kartu KPI saat ruangnya sempit."""
+    isi = "".join(
+        f'<span class="dh-si"><b>{html.escape(str(v))}</b>'
+        f'<span>{html.escape(str(l))}</span></span>' for l, v in items)
+    return f'<div class="dh-statinline">{isi}</div>'
 
 
 def inject_portal_css():

@@ -195,6 +195,7 @@ def load_backend_monitoring(source: str | pd.DataFrame | None = None) -> pd.Data
     """
     kolom = {
         "CANDIDATE NAME": "candidate_id",
+        "No Telpon": "phone",
         "Position ID": "position_id",
         "POSITION NAME": "position_name",
         "DEPARTMENT": "departement",
