@@ -745,13 +745,14 @@ def page_weekly():
               ["Nama", "SLA Actual", "SLA Budget", "Achievement", "Kandidat",
                "Onboarding"], baris, align="lrrrrr", max_rows=None)
         st.markdown(theme.inline_note(
-            "Tiap tahap dirata-ratakan dulu di antara kandidat yang orang itu tangani, lalu "
-            "rata-rata antar tahap dijumlahkan — <b>seluruh tahap proses ikut</b>, termasuk "
-            "One Month Notice yang budget-nya 30 hari. Karena itu SLA Budget di sini sejalan "
-            "dengan target 60+ hari di matriks Backend. <b>Achievement</b> = Budget ÷ Actual; "
-            "di atas 100% berarti lebih cepat dari target. <b>Kandidat</b> dan <b>Onboarding</b> "
-            "dihitung dari PIC Screening CV saja, jadi satu kandidat hanya masuk ke satu nama "
-            "dan kolomnya boleh dijumlahkan ke bawah.",
+            "<b>Kandidat</b> memakai tanggal <b>Screening CV</b> — berapa CV yang orang itu "
+            "proses di periode ini. <b>Onboarding</b> memakai tanggal <b>onboarding</b> — "
+            "berapa yang benar-benar mulai kerja di periode ini. Dua basis tanggal yang "
+            "berbeda, dan itu disengaja: dengan begitu kolom Onboarding kalau dijumlahkan "
+            "ke bawah sama persis dengan total <b>Ringkasan per site</b> di bawah. "
+            "Kandidat yang kolom PIC-nya kosong masuk ke baris <b>PIC Site …</b>, bukan "
+            "hilang. <b>SLA</b> menjumlahkan rata-rata tiap tahap dari seluruh tahap proses, "
+            "termasuk One Month Notice; <b>Achievement</b> = Budget ÷ Actual.",
             block=True), unsafe_allow_html=True)
 
     # ── New Hire ───────────────────────────────────────────────────────────

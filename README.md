@@ -573,3 +573,64 @@ lama hanya berisi inisial, empat recruiter tercatat nol padahal datanya ada.
 
 Diverifikasi terhadap hitungan langsung dari sheet: kedelapan baris tabel
 Performance cocok persis, selisih nol.
+
+
+## Kolom Onboarding sekarang cocok dengan Ringkasan per site
+
+Sebelumnya kolom Onboarding di tabel Performance tidak pernah bisa dicocokkan
+dengan Ringkasan per site walau sumbernya sama. Untuk Jun–Sep 2026: **75 vs 126**.
+Selisih 51 itu punya dua sebab yang berbeda, dan keduanya sudah diperbaiki.
+
+**Sebab 1 — kandidat tanpa PIC hilang tanpa jejak (21 orang).** Baris yang kolom
+PIC Screening CV-nya kosong disaring keluar sejak awal: bukan masuk "Recruiter
+lain", tapi benar-benar tidak dihitung. Dari 127 orang yang onboarding Jun–Sep
+2026, **21 tidak punya PIC screening** — 18 di antaranya SSCP, sisanya JKT, KCP,
+ACP. Kebanyakan rekrutan massal Non Staff seperti Driver Travel dan Pit
+Controller.
+
+Sekarang mereka dikelompokkan per site jadi baris **"PIC Site SSCP"**, **"PIC Site
+ACP"**, dan seterusnya — di lapangan memang site yang menanganinya. Barisnya
+diurutkan setelah nama orang tapi sebelum "Recruiter lain": bukan orang, tapi juga
+bukan sisa-sisa.
+
+**Sebab 2 — Onboarding memakai basis tanggal yang salah (34 orang).** Kolom itu
+dulu menghitung "kandidat yang di-screening dalam periode DAN statusnya CLOSE",
+jadi orang yang di-screening Mei tapi onboarding Juli tidak terhitung di periode
+Jun–Sep. Sekarang basisnya **tanggal onboarding**, sama dengan Ringkasan per site
+dan New Hire.
+
+Dua kolom, dua basis tanggal, dan itu disengaja:
+
+| Kolom | Basis | Menjawab |
+|---|---|---|
+| Kandidat | tanggal **Screening CV** | berapa CV yang saya proses periode ini |
+| Onboarding | tanggal **onboarding** | berapa yang benar-benar mulai kerja periode ini |
+
+Syarat `status1 = CLOSE` ikut dipakai persis seperti di `summary_matrix()`: ada 4
+orang di 2026 yang tanggal onboarding-nya terisi tapi statusnya FAILED — batal di
+detik terakhir.
+
+**Hasil verifikasi** — kolom Onboarding dijumlahkan ke bawah vs total Ringkasan
+per site:
+
+| Periode | Performance | Ringkasan per site | Selisih |
+|---|---|---|---|
+| Jan–Mar 2026 | 175 | 175 | 0 |
+| Jun–Sep 2026 | 126 | 126 | 0 |
+| Agustus 2026 | 44 | 44 | 0 |
+| 2026 penuh | 435 | 435 | 0 |
+
+Cocok juga saat difilter per site (BCP 42, SSCP 53, KCP 8).
+
+## Satu baris, satu populasi
+
+Ikut diperbaiki sekalian: SLA di tabel Performance dulu memakai populasi yang
+BERBEDA dari Kandidat dan Onboarding. SLA memakai "semua kandidat yang tahap mana
+pun pernah ia pegang", sementara dua kolom lain memakai "kandidat yang ia
+screening". Satu baris berisi angka dari dua kelompok orang yang berbeda — dan
+itu sebabnya baris "PIC Site SSCP" sempat tampil punya 83 kandidat tapi SLA
+kosong: SLA kandidat itu tercatat di baris orang lain.
+
+Sekarang seluruh kolom memakai satu populasi: **kandidat yang PIC Screening
+CV-nya orang itu**. SLA-nya tetap menjumlahkan rata-rata dari SELURUH tahap
+proses kandidat tersebut, bukan hanya tahap yang ia pegang sendiri.

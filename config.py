@@ -538,6 +538,18 @@ RECRUITER_ROSTER = [
 # Navi). Tanpa ini, 84% aktivitas di database hilang dari report.
 OTHER_RECRUITER_LABEL = "Recruiter lain"
 
+# Kandidat yang kolom PIC Screening CV-nya KOSONG. Dulu baris seperti ini hilang
+# sama sekali dari tabel Performance — bukan masuk "Recruiter lain", tapi
+# benar-benar tidak dihitung — sehingga jumlah kolom Onboarding tidak pernah
+# cocok dengan Ringkasan per site. Sekarang dikelompokkan per site, karena di
+# lapangan memang site yang menanganinya (rekrutan massal Non Staff seperti
+# Driver Travel dan Pit Controller).
+def site_pic_label(loc) -> str:
+    loc = str(loc or "").strip().upper()
+    if not loc or loc in ("NAN", "NONE", "-"):
+        return "PIC Site (tanpa site)"
+    return f"PIC Site {loc}"
+
 # Kolom PIC per tahap. Tahap yang tidak terdaftar tidak punya PIC di database,
 # jadi tidak ikut dihitung ke siapa pun.
 STAGE_PIC_COLUMN = {

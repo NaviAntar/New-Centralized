@@ -589,28 +589,53 @@ def recruiter_owned(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.DataF
     di tahap mana pun. Satu kandidat bisa dimiliki lebih dari satu orang; itu
     disengaja, karena proses rekrutmen memang dikerjakan bergantian.
     """
-    pic = sf[sf["pic_initial"].notna()][["cand_key", "pic_initial", "loc", "screening_date"]].copy()
+    pic = sf[sf["pic_initial"].notna()][["cand_key", "pic_initial", "loc",
+                                         "screening_date"]].copy()
     pic["name"] = pic["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
     pic["name"] = pic["name"].fillna(C.OTHER_RECRUITER_LABEL)
-    return pic.drop_duplicates(["cand_key", "name"])
+    pic = pic.drop_duplicates(["cand_key", "name"])
+
+    # Kandidat yang TIDAK punya PIC di tahap mana pun tetap harus punya pemilik,
+    # kalau tidak SLA-nya hilang dari tabel dan baris "PIC Site …" tampil kosong
+    # padahal orangnya ada. Yang seperti ini dikelompokkan per site.
+    yatim = sf[~sf["cand_key"].isin(set(pic["cand_key"]))]
+    if len(yatim):
+        yatim = (yatim[["cand_key", "loc", "screening_date"]]
+                 .drop_duplicates("cand_key").copy())
+        yatim["pic_initial"] = None
+        yatim["name"] = yatim["loc"].map(C.site_pic_label)
+        pic = pd.concat([pic, yatim[pic.columns]], ignore_index=True)
+    return pic
 
 
-def _screening_owner(sf: pd.DataFrame, extra_map, date_from, date_to, sites) -> pd.DataFrame:
+def _screening_owner(sf: pd.DataFrame, extra_map, date_from=None, date_to=None,
+                     sites=None) -> pd.DataFrame:
     """Kandidat beserta PIC Screening CV-nya — dasar hitungan Kandidat & Onboarding.
 
     Screening CV dipilih sebagai penentu kepemilikan karena itu pintu masuk
     kandidat: tiap kandidat punya tepat satu PIC screening, jadi tidak ada yang
     terhitung dua kali.
+
+    Frame yang dikembalikan membawa DUA tanggal — screening dan onboarding —
+    karena kedua kolom di tabel Performance bertumpu pada tanggal yang berbeda;
+    lihat recruiter_performance().
     """
-    scr = sf[(sf["stage"] == "Screening CV") & sf["pic_initial"].notna()].copy()
-    if date_from is not None:
-        scr = scr[scr["screening_date"] >= pd.Timestamp(date_from)]
-    if date_to is not None:
-        scr = scr[scr["screening_date"] <= pd.Timestamp(date_to)]
+    scr = sf[sf["stage"] == "Screening CV"].copy()
+    ob = (sf[sf["stage"] == "Onboarding"].drop_duplicates("cand_key")
+            .set_index("cand_key")["end"])
+    scr["onboarding_date"] = scr["cand_key"].map(ob)
+
+    # Kandidat yang PIC screening-nya kosong TIDAK dibuang. Dulu baris ini
+    # disaring keluar, dan 21 dari 127 orang yang onboarding Jun-Sep 2026 hilang
+    # dari tabel Performance tanpa jejak — 18 di antaranya SSCP. Sekarang
+    # dikelompokkan per site: di lapangan memang site yang menanganinya.
+    nama = scr["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
+    kosong = scr["pic_initial"].isna() | ~scr["pic_initial"].map(C.is_valid_initial)
+    scr["name"] = nama.where(~kosong, scr["loc"].map(C.site_pic_label))
+    scr["name"] = scr["name"].fillna(C.OTHER_RECRUITER_LABEL)
+
     if sites:
         scr = scr[scr["loc"].isin(C.loc_values_for(sites))]
-    scr["name"] = scr["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
-    scr["name"] = scr["name"].fillna(C.OTHER_RECRUITER_LABEL)
     return scr.drop_duplicates(["cand_key", "name"])
 
 
@@ -632,29 +657,41 @@ def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
     targetnya 60+ hari. Sekarang budget totalnya sejalan dengan matriks SLA di
     Monitoring 2026 > Backend.
 
-    Filter tanggal merujuk ke TANGGAL SCREENING CV kandidat, jadi satu kandidat
-    selalu utuh dalam satu periode.
+    Kolom Kandidat dan Onboarding memakai basis tanggal yang BERBEDA, dan itu
+    disengaja: Kandidat memakai tanggal Screening CV ("berapa CV yang saya proses
+    periode ini"), Onboarding memakai tanggal onboarding ("berapa yang mulai
+    kerja periode ini"). Dengan begitu kolom Onboarding kalau dijumlahkan ke
+    bawah sama persis dengan total Ringkasan per site di periode yang sama.
 
-    PENTING: kolom Onboarding tidak bisa dijumlahkan ke bawah — satu kandidat
-    dikreditkan ke semua PIC yang menanganinya (keputusan Navi).
+    SLA memakai kandidat yang orang itu tangani di periode screening.
     """
-    milik = recruiter_owned(sf, extra_map)
-
-    if date_from is not None:
-        milik = milik[milik["screening_date"] >= pd.Timestamp(date_from)]
-    if date_to is not None:
-        milik = milik[milik["screening_date"] <= pd.Timestamp(date_to)]
-    if sites:
-        milik = milik[milik["loc"].isin(C.loc_values_for(sites))]
+    # SATU populasi untuk seluruh kolom: kandidat yang PIC Screening CV-nya orang
+    # itu. Sebelumnya SLA memakai populasi lain — "semua kandidat yang tahap mana
+    # pun pernah ia pegang" — sementara Kandidat dan Onboarding memakai screening.
+    # Akibatnya satu baris berisi angka dari dua kelompok orang yang berbeda, dan
+    # baris seperti "PIC Site SSCP" tampil punya 83 kandidat tapi SLA kosong,
+    # karena SLA kandidat itu tercatat di baris orang lain.
+    pemilik = _screening_owner(sf, extra_map, sites=sites)
 
     kolom = ["name", "sla_actual", "sla_budget", "stages", "candidates",
              "onboarding", "achievement"]
-    if milik.empty:
+    if pemilik.empty:
         g = pd.DataFrame(columns=kolom[1:], index=pd.Index([], name="name"))
     else:
-        # Seluruh tahap kandidat yang ditangani orang itu — bukan hanya tahap
-        # yang ia pegang sendiri.
-        semua = sf.merge(milik[["cand_key", "name"]], on="cand_key", how="inner")
+        def dalam(kolom_tanggal):
+            m = pemilik[kolom_tanggal].notna()
+            if date_from is not None:
+                m &= pemilik[kolom_tanggal] >= pd.Timestamp(date_from)
+            if date_to is not None:
+                m &= pemilik[kolom_tanggal] <= pd.Timestamp(date_to)
+            return pemilik[m]
+
+        periode = dalam("screening_date")
+
+        # SLA memakai SELURUH tahap proses kandidat itu — bukan hanya tahap yang
+        # orangnya pegang sendiri. Versi lama hanya menghitung tujuh tahap ber-PIC
+        # sehingga One Month Notice yang budget-nya saja 30 hari ikut terbuang.
+        semua = sf.merge(periode[["cand_key", "name"]], on="cand_key", how="inner")
         terpakai = semua[semua["applicable"] & semua["budget"].notna()]
 
         per_stage = terpakai.groupby(["name", "stage"]).agg(
@@ -667,17 +704,27 @@ def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
             sla_budget=("budget", "sum"),
             stages=("stage", "nunique"),
         )
+        # Nama yang punya kandidat tapi belum punya tahap ber-budget tetap harus
+        # muncul; penempelan kolom di bawah mengikuti indeks yang sudah ada.
+        g = g.reindex(g.index.union(pemilik["name"].unique(), sort=False))
 
-        # Kandidat dan Onboarding dihitung dari PIC SCREENING CV saja, bukan dari
-        # semua tahap. Satu kandidat ditangani beberapa orang, jadi menghitung
-        # lewat semua PIC membuat satu orang yang sama terhitung di beberapa
-        # baris sekaligus dan jumlah kolomnya jauh melampaui hire sebenarnya.
-        # Dengan bertumpu pada screening — pintu masuk kandidat — tiap kandidat
-        # hanya dikreditkan sekali (keputusan Navi).
-        pemilik = _screening_owner(sf, extra_map, date_from, date_to, sites)
-        g["candidates"] = pemilik.groupby("name")["cand_key"].nunique()
-        g["onboarding"] = (pemilik[pemilik["status1"] == "CLOSE"]
-                           .groupby("name")["cand_key"].nunique())
+        # Dua kolom, dua basis tanggal — dan itu memang disengaja:
+        #   Kandidat  : tanggal SCREENING CV  -> "berapa CV yang saya proses"
+        #   Onboarding: tanggal ONBOARDING    -> "berapa yang mulai kerja"
+        # Sebelumnya keduanya memakai tanggal screening, sehingga orang yang
+        # di-screening Mei tapi onboarding Juli tidak terhitung di periode
+        # Jun-Sep. Akibatnya kolom Onboarding tidak pernah bisa dicocokkan
+        # dengan Ringkasan per site, padahal sumbernya sama.
+        g["candidates"] = periode.groupby("name")["cand_key"].nunique()
+
+        # Syarat CLOSE dipakai persis seperti di summary_matrix(): ada 4 orang di
+        # 2026 yang tanggal onboarding-nya terisi tapi statusnya FAILED — batal di
+        # detik terakhir. Tanpa syarat ini kolom Onboarding kelebihan 4 dari
+        # Ringkasan per site, dan selisih kecil yang tidak dijelaskan justru
+        # paling melelahkan untuk ditelusuri.
+        tutup = dalam("onboarding_date")
+        tutup = tutup[tutup["status1"] == "CLOSE"]
+        g["onboarding"] = tutup.groupby("name")["cand_key"].nunique()
         g["achievement"] = (g["sla_budget"] / g["sla_actual"] * 100).where(g["sla_actual"] > 0)
 
     # Roster selalu tampil lengkap, termasuk orang yang belum punya data —
@@ -686,8 +733,15 @@ def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
     for c in ("candidates", "stages", "onboarding"):
         g[c] = g[c].fillna(0).astype(int)
 
+    # Urutannya: roster dulu, lalu baris per site, lalu "Recruiter lain".
+    # Baris site bukan orang, jadi tidak pantas berdiri di antara nama orang —
+    # tapi juga bukan sisa-sisa, jadi tidak pantas ikut tenggelam di paling bawah.
     order = {n: i for i, n in enumerate(C.RECRUITER_ROSTER)}
-    g["_sort"] = [order.get(n, 90 if n == C.OTHER_RECRUITER_LABEL else 50) for n in g.index]
+    g["_sort"] = [
+        order.get(n, 90 if n == C.OTHER_RECRUITER_LABEL
+                  else 70 if str(n).startswith("PIC Site") else 50)
+        for n in g.index
+    ]
     g = g.sort_values(["_sort"]).drop(columns="_sort")
 
     return g.reset_index().rename(columns={"index": "name"}).round(
@@ -1320,10 +1374,8 @@ def monitoring_pic(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.Series
     Performance: tiap kandidat punya tepat satu PIC screening, jadi filter PIC di
     halaman ini menghasilkan angka yang sama dengan tabel Performance.
     """
-    scr = sf[(sf["stage"] == "Screening CV") & sf["pic_initial"].notna()]
-    nama = scr["pic_initial"].map(lambda i: recruiter_name(i, extra_map))
-    nama = nama.fillna(C.OTHER_RECRUITER_LABEL)
-    return pd.Series(nama.values, index=scr["cand_key"].values).groupby(level=0).first()
+    pem = _screening_owner(sf, extra_map)
+    return pem.set_index("cand_key")["name"].groupby(level=0).first()
 
 
 def monitoring_table(df: pd.DataFrame, sf: pd.DataFrame, lt: pd.DataFrame,
