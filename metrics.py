@@ -603,7 +603,8 @@ def recruiter_owned(sf: pd.DataFrame, extra_map: dict | None = None) -> pd.DataF
         yatim = (yatim[["cand_key", "loc", "screening_date"]]
                  .drop_duplicates("cand_key").copy())
         yatim["pic_initial"] = None
-        yatim["name"] = yatim["loc"].map(C.site_pic_label)
+        yatim["name"] = (yatim["loc"].map(C.site_pic_label)
+                         .fillna(C.OTHER_RECRUITER_LABEL))
         pic = pd.concat([pic, yatim[pic.columns]], ignore_index=True)
     return pic
 
@@ -732,6 +733,15 @@ def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
     g = g.reindex(g.index.union(C.RECRUITER_ROSTER, sort=False))
     for c in ("candidates", "stages", "onboarding"):
         g[c] = g[c].fillna(0).astype(int)
+
+    # Baris "PIC Site …" yang kosong sama sekali di periode ini dibuang. Nama
+    # roster tetap ditampilkan walau nol — baris nol untuk orang itu informasi
+    # ("belum ada yang ia pegang"), sedangkan baris nol untuk site cuma sampah.
+    kosong = ((g["candidates"] == 0) & (g["onboarding"] == 0)
+              & g["sla_actual"].isna()
+              & pd.Series([str(n).startswith("PIC Site") for n in g.index],
+                          index=g.index))
+    g = g[~kosong]
 
     # Urutannya: roster dulu, lalu baris per site, lalu "Recruiter lain".
     # Baris site bukan orang, jadi tidak pantas berdiri di antara nama orang —

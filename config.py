@@ -544,10 +544,15 @@ OTHER_RECRUITER_LABEL = "Recruiter lain"
 # cocok dengan Ringkasan per site. Sekarang dikelompokkan per site, karena di
 # lapangan memang site yang menanganinya (rekrutan massal Non Staff seperti
 # Driver Travel dan Pit Controller).
-def site_pic_label(loc) -> str:
+def site_pic_label(loc) -> str | None:
+    """Nama baris pengganti untuk kandidat tanpa PIC. None kalau site-nya juga
+    kosong — barisnya tidak punya site untuk dituju, jadi lebih jujur masuk
+    "Recruiter lain" daripada jadi baris "PIC Site (tanpa site)" yang tidak
+    memberi tahu apa pun (keputusan Navi, 6 Sep 2026).
+    """
     loc = str(loc or "").strip().upper()
     if not loc or loc in ("NAN", "NONE", "-"):
-        return "PIC Site (tanpa site)"
+        return None
     return f"PIC Site {loc}"
 
 # Kolom PIC per tahap. Tahap yang tidak terdaftar tidak punya PIC di database,
