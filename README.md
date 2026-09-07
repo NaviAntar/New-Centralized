@@ -634,3 +634,82 @@ kosong: SLA kandidat itu tercatat di baris orang lain.
 Sekarang seluruh kolom memakai satu populasi: **kandidat yang PIC Screening
 CV-nya orang itu**. SLA-nya tetap menjumlahkan rata-rata dari SELURUH tahap
 proses kandidat tersebut, bukan hanya tahap yang ia pegang sendiri.
+
+## Summary by Division
+
+Meniru sheet **Summary by Division** milik tim, tapi bisa ditelusuri: sheet
+aslinya berhenti di Staff/Non Staff, dan level baru terlihat kalau pivot-nya
+dibongkar sendiri.
+
+Urutannya seperti grouping di Excel: **All → site → divisi → level → posisi &
+orang**. Klik divisi untuk membukanya per level, lalu pilih level untuk melihat
+posisi dan siapa yang sedang diproses. Expander tidak bisa ditumpuk di Streamlit,
+jadi tingkat ketiga dipilih lewat kontrol di dalam expander divisi — klik kedua
+tetap ada, tanpa memaksa Streamlit melakukan yang tidak bisa.
+
+**Tiga sumber, tiga peran yang berbeda:**
+
+| Sumber | Perannya |
+|---|---|
+| MPP Reforecast (`MPP_SPREADSHEET_ID`) | berapa yang **direncanakan** |
+| Update Employee List | berapa yang **ada** sekarang (End Date kosong = aktif) |
+| Database kandidat | berapa yang **sedang diproses** |
+
+Divisi seorang karyawan diambil dari **huruf pertama Position Code**, dipetakan
+lewat sheet `Code Divisi` — aturan yang sama dengan yang dipakai sheet aslinya.
+Sudah dicocokkan terhadap blok BCP: seluruh divisi sama persis kecuali dua yang
+selisih satu orang karena snapshot sheet-nya beda hari. Total MPP juga cocok
+persis (BCP 2.886, JKT 257).
+
+Satu perbedaan yang disengaja: blok JKT di sheet aslinya hanya berisi baris
+Staff, sedangkan halaman ini menghitung Staff dan Non Staff di semua site —
+karena itu Actual JKT di sini lebih besar.
+
+**Level** ditulis sebagai angka di sheet dan diterjemahkan lewat
+`config.LEVEL_CODE_NAMES`: 11 Non Staff · 10 Jr. Staff/Foreman · 9 Supervisor ·
+8 Superintendent · 7–6 Manager · 5 GM · 4 Deputy Director · 3 Director ·
+2 President Director · 1–0 Commissioner. Level 7 dan 6 digabung jadi satu baris
+"Manager" — dua baris Manager yang berbeda hanya membingungkan pembaca yang tidak
+tahu kode di baliknya.
+
+## SLA per kandidat & estimasi onboarding
+
+**SLA** sekarang dijumlahkan dari lead time TIAP TAHAP, bukan dari selisih
+tanggal ujung ke ujung. Kandidat OPEN dan FAILED belum punya tanggal onboarding,
+jadi cara lama membuat kolomnya kosong padahal prosesnya jelas sudah memakan
+waktu. Hasilnya: terisi untuk **2.205 kandidat**, dari sebelumnya 451.
+
+**Estimasi onboarding** muncul sebagai kartu keempat di Tracking Kandidat untuk
+kandidat yang masih OPEN, dan sebagai angka oranye di kolom "SLA / target" di
+Tracking Posisi. Cara hitungnya:
+
+1. sisa budget tahap yang sedang berjalan (budget − hari terpakai, minimal nol);
+2. ditambah rata-rata tiap tahap yang **belum dijalani**.
+
+Rata-ratanya dihitung **per tahap dulu baru dijumlahkan** — bukan semua durasi
+dikumpulkan lalu dirata-rata sekali, karena tahap yang datanya banyak akan
+menenggelamkan tahap yang datanya sedikit. Yang dipakai adalah kecepatan PIC
+kandidat itu sendiri; rata-rata semua orang hanya menambal tahap yang PIC-nya
+belum pernah kerjakan.
+
+Tahap yang nomornya lebih kecil dari tahap terjauh yang sudah dijalani tidak
+dihitung sebagai sisa — itu tahap yang dilewati atau tanggalnya tidak pernah
+diisi (PRF Approval paling sering), dan menghitungnya membuat perkiraannya
+kepanjangan.
+
+Di tabel, kolom **SLA / target** selalu terisi: angka kiri hari kerja yang sudah
+terpakai, angka kanan perkiraan sisa (oranye, untuk yang OPEN) atau budget SLA
+level itu (abu, untuk yang sudah selesai).
+
+## Backup candidate
+
+"Talent pool" diganti jadi **backup candidate** di seluruh tampilan. Nilai yang
+dicari di kolom Result tetap `TALENT POOL` karena itu yang ditulis form Apps
+Script — yang berganti hanya sebutannya (arahan Navi, 7 Sep 2026).
+
+## Achievement dipotong di 120%
+
+Tanpa batas, orang yang kebetulan memegang satu kandidat cepat bisa tampil
+2.000% dan membuat kolomnya tidak bisa dibandingkan antar orang — yang tinggi
+terbaca sebagai anomali, bukan sebagai prestasi. Batasnya di
+`config.ACHIEVEMENT_MAX`.

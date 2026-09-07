@@ -88,9 +88,11 @@ RESULT_COLORS = {
 
 RESULT_LABEL = {
     "CLOSE": "Hired",
-    # Talent pool berdiri sendiri, bukan varian Hired: orangnya lolos seleksi
-    # tapi belum ditempatkan, dan menyebutnya "Hired" akan salah.
-    "TALENT POOL": "Talent Pool",
+    # Backup candidate berdiri sendiri, bukan varian Hired: orangnya lolos
+    # seleksi tapi belum ditempatkan, dan menyebutnya "Hired" akan salah.
+    # Nilai kuncinya tetap "TALENT POOL" karena itu yang ditulis form Apps Script
+    # ke kolom Result; yang berganti hanya labelnya di layar (arahan Navi).
+    "TALENT POOL": "Backup Candidate",
     "OPEN": "On Progress",
     "FAILED": "Failed",
     "HOLD": "Hold",

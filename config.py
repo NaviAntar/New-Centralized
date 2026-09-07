@@ -49,6 +49,54 @@ PRF_STAFF_LEVELS = [
 PRF_TRACKING_VALUES = ["APPROVED", "ROUTING PRF"]
 PRF_STATUS_VALUES = ["CLOSE", "OPEN", "HOLD", "CANCEL"]
 
+# MPP Reforecast — rencana headcount per posisi. Sumber angka MPP di halaman
+# Summary by Division.
+MPP_SPREADSHEET_ID = "1BdzArgjMunh7IDMnnidNi3-qgKliaSQxMKyW0hc0FGY"
+MPP_GID_REFORECAST = "1401190451"
+MPP_SHEET_REFORECAST = "MPP Reforecast"
+
+# Level di sheet ditulis sebagai ANGKA. Peta ini menerjemahkannya ke sebutan yang
+# dipakai tim (arahan Navi, 7 Sep 2026). Urutannya dari paling bawah ke paling
+# atas — itu urutan yang dipakai menampilkan drill-down per level.
+LEVEL_CODE_NAMES = {
+    11: "Non Staff",
+    10: "Jr. Staff / Foreman",
+    9: "Supervisor",
+    8: "Superintendent",
+    7: "Manager",
+    6: "Manager",
+    5: "General Manager",
+    4: "Deputy Director",
+    3: "Director",
+    2: "President Director",
+    1: "Commissioner",
+    0: "Commissioner",
+}
+
+# Urutan tampil: dari level paling bawah ke paling atas.
+LEVEL_ORDER = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+
+
+def level_name(code) -> str:
+    """Kode level angka -> sebutan tim. 'LS' dan nilai tak dikenal apa adanya."""
+    try:
+        return LEVEL_CODE_NAMES[int(float(code))]
+    except (TypeError, ValueError, KeyError):
+        teks = str(code or "").strip()
+        return teks if teks and teks.lower() != "nan" else "Belum ada level"
+
+
+# Nama lokasi panjang -> kode site, dipakai menyamakan sheet MPP/karyawan dengan
+# database kandidat yang memakai kode singkat.
+LOCATION_TO_SITE = {
+    "Bengalon Coal Project": "BCP",
+    "Kintap Coal Project": "KCP",
+    "Asam-Asam Coal Project": "ACP",
+    "Sebuku Sejaka Coal Project": "SSCP",
+    "Jakarta": "JKT",
+    "Balikpapan": "BPN",
+}
+
 # Report Recruitment — Summary, New Hire, ONP.
 REPORT_SPREADSHEET_ID = "1_MAK4sNAKQpQA7fV3HPvsRN3BI-EIowyRYEM5D3Av4w"
 REPORT_GID_DEFAULT = "1072355758"
@@ -75,6 +123,8 @@ REPORT_GIDS = {
     "Karyawan Resign": "836878659",
     "Backend Monitoring": "0",
     "Update MPP": "504172347",
+    "Summary by Division": "856663966",
+    "Code Divisi": "482521119",
 }
 REPORT_GID_MPP = REPORT_GIDS["Update MPP"]
 
@@ -144,6 +194,7 @@ PAGE_ACCESS = {
     "tracking_candidate": {ROLE_RECRUITMENT, ROLE_USER},
     "tracking_position": {ROLE_RECRUITMENT, ROLE_USER},
     "prf": {ROLE_RECRUITMENT, ROLE_USER},
+    "division": {ROLE_RECRUITMENT, ROLE_USER},
     "rec_room": {ROLE_RECRUITMENT},
 }
 
@@ -520,6 +571,17 @@ DEPT_ALIASES = {
 # Menjumlahkan keduanya jadi satu angka "hire" membuat pencapaian rekrutmen
 # terlihat lebih besar dari kenyataan, jadi di portal keduanya dipisah.
 TALENT_POOL_RESULT = "TALENT POOL"
+
+# Di layar orang-orangnya disebut "backup candidate" (arahan Navi, 7 Sep 2026).
+# Nilai yang dicari di kolom Result TETAP "TALENT POOL" karena itu yang ditulis
+# form Apps Script — yang berganti hanya sebutannya, bukan datanya.
+BACKUP_LABEL = "Backup candidate"
+
+# Achievement recruiter dipotong di sini. Tanpa batas, orang yang kebetulan
+# memegang satu kandidat cepat bisa tampil 2.000% dan membuat kolomnya tidak
+# bisa dibandingkan antar orang — yang tinggi terbaca sebagai anomali, bukan
+# sebagai prestasi (arahan Navi, 7 Sep 2026).
+ACHIEVEMENT_MAX = 120.0
 
 # Nama yang tampil sebagai baris tersendiri di tabel Performance, sesuai urutan
 # yang Navi berikan. Nama tanpa inisial tetap muncul (nilai nol) supaya terlihat

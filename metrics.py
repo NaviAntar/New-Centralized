@@ -726,7 +726,10 @@ def recruiter_performance(sf: pd.DataFrame, date_from=None, date_to=None,
         tutup = dalam("onboarding_date")
         tutup = tutup[tutup["status1"] == "CLOSE"]
         g["onboarding"] = tutup.groupby("name")["cand_key"].nunique()
-        g["achievement"] = (g["sla_budget"] / g["sla_actual"] * 100).where(g["sla_actual"] > 0)
+        # Dipotong di ACHIEVEMENT_MAX: lihat alasannya di config.
+        g["achievement"] = ((g["sla_budget"] / g["sla_actual"] * 100)
+                            .where(g["sla_actual"] > 0)
+                            .clip(upper=C.ACHIEVEMENT_MAX))
 
     # Roster selalu tampil lengkap, termasuk orang yang belum punya data —
     # baris nol lebih jujur daripada nama yang hilang begitu saja.
@@ -978,7 +981,8 @@ def position_options(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
 
 
 def position_candidates(df: pd.DataFrame, lt: pd.DataFrame, position_name: str,
-                        loc: str | None = None) -> pd.DataFrame:
+                        loc: str | None = None, sf: pd.DataFrame | None = None,
+                        estimasi: pd.Series | None = None) -> pd.DataFrame:
     """Kandidat untuk satu posisi di satu site, lengkap dengan total lead time.
 
     Kolomnya sengaja dibatasi pada yang dipakai saat menilai pemenuhan posisi:
@@ -990,16 +994,31 @@ def position_candidates(df: pd.DataFrame, lt: pd.DataFrame, position_name: str,
     if d.empty:
         return pd.DataFrame(columns=["candidate_id", "position_name", "position_id",
                                      "departement", "level", "loc", "last_progress",
-                                     "total_lt", "status1"])
+                                     "total_lt", "budget_total", "estimasi",
+                                     "status1"])
 
     # Sheet sumber sudah punya kolom bernama total_lt, tapi isinya jumlah durasi
     # tahap — bukan lead time end-to-end (temuan T-01). Kolom itu dibuang lebih
     # dulu supaya tidak ada dua kolom bernama sama dengan arti berbeda.
     d = d.drop(columns=[c for c in ("total_lt", "tot_lt") if c in d.columns])
-    d = d.merge(lt[["cand_key", "lt_elapsed"]], on="cand_key", how="left")
-    d = d.rename(columns={"lt_elapsed": "total_lt"})
+    d = d.merge(lt[["cand_key", "budget_total"]], on="cand_key", how="left")
+
+    # SLA dijumlahkan dari tiap tahap, jadi kandidat OPEN dan FAILED pun punya
+    # angka — cara lama (selisih tanggal ujung ke ujung) hanya terisi untuk yang
+    # sudah onboarding, dan sisanya kosong (arahan Navi, 7 Sep 2026).
+    if sf is not None:
+        d["total_lt"] = d["cand_key"].map(sla_per_candidate(sf))
+        d["estimasi"] = d["cand_key"].map(estimasi)
+    else:
+        d["total_lt"] = pd.NA
+        d["estimasi"] = pd.NA
+
+    # Yang sudah selesai tidak perlu diperkirakan — targetnya diisi budget SLA
+    # level itu, yaitu "harusnya selesai berapa hari".
+    d.loc[d["status1"] != "OPEN", "estimasi"] = pd.NA
     kol = ["candidate_id", "position_name", "position_id", "departement", "level",
-           "loc", "last_progress", "total_lt", "status1"]
+           "loc", "last_progress", "total_lt", "budget_total", "estimasi",
+           "status1"]
     kol = [c for c in kol if c in d.columns]
     urut = {"OPEN": 0, "CLOSE": 1, "FAILED": 2}
     d["_u"] = d["status1"].map(urut).fillna(3)
@@ -1346,7 +1365,9 @@ def position_summary(df: pd.DataFrame, departemen=None, sites=None) -> pd.DataFr
 
 
 def ongoing_candidates(df: pd.DataFrame, lt: pd.DataFrame, departemen=None,
-                       sites=None, position_name=None) -> pd.DataFrame:
+                       sites=None, position_name=None,
+                       sf: pd.DataFrame | None = None,
+                       estimasi: pd.Series | None = None) -> pd.DataFrame:
     """Kandidat yang prosesnya masih berjalan, siap ditampilkan apa adanya."""
     d = _terpakai(df, sites, [departemen] if isinstance(departemen, str) else departemen)
     d = d[d["status1"] == "OPEN"]
@@ -1354,10 +1375,13 @@ def ongoing_candidates(df: pd.DataFrame, lt: pd.DataFrame, departemen=None,
         d = d[d["position_name"] == position_name]
     if d.empty:
         return pd.DataFrame(columns=["candidate_id", "position_name", "loc",
-                                     "level", "last_progress", "lt_elapsed"])
-    d = d.merge(lt[["cand_key", "lt_elapsed"]], on="cand_key", how="left")
+                                     "level", "last_progress", "lt_elapsed",
+                                     "budget_total", "estimasi"])
+    d = d.merge(lt[["cand_key", "budget_total"]], on="cand_key", how="left")
+    d["lt_elapsed"] = d["cand_key"].map(sla_per_candidate(sf)) if sf is not None else pd.NA
+    d["estimasi"] = d["cand_key"].map(estimasi) if estimasi is not None else pd.NA
     kol = ["candidate_id", "position_name", "loc", "level", "last_progress",
-           "lt_elapsed"]
+           "lt_elapsed", "budget_total", "estimasi"]
     return d[kol].sort_values(["position_name", "candidate_id"])
 
 
@@ -1479,3 +1503,330 @@ def last_progress_breakdown(d: pd.DataFrame) -> list[tuple[str, int]]:
     hitung = jalan["last_progress"].fillna("Belum mulai").value_counts().to_dict()
     urut = {t: i for i, t in enumerate(STAGE_ORDER)}
     return sorted(hitung.items(), key=lambda kv: urut.get(kv[0], 99))
+
+
+# ===========================================================================
+# SLA per kandidat & estimasi onboarding
+# ===========================================================================
+# Dua hal yang dulu kosong dan sekarang selalu terisi:
+#
+#   SLA kandidat  Jumlah lead time TIAP TAHAP yang sudah berjalan, bukan selisih
+#                 tanggal ujung ke ujung. Kandidat OPEN dan FAILED belum punya
+#                 tanggal onboarding, jadi lt_elapsed-nya kosong — dan kolom SLA
+#                 mereka ikut kosong, padahal prosesnya jelas sudah memakan
+#                 waktu. Menjumlahkan per tahap membuat angkanya ada sejak tahap
+#                 pertama selesai (arahan Navi, 7 Sep 2026).
+#
+#   Estimasi      Untuk kandidat OPEN: sisa budget tahap yang sedang berjalan,
+#   onboarding    ditambah rata-rata tiap tahap yang belum dijalani. Rata-ratanya
+#                 dihitung PER TAHAP dulu baru dijumlahkan — bukan semua durasi
+#                 dikumpulkan lalu dirata-rata sekali, karena tahap yang datanya
+#                 banyak akan menenggelamkan tahap yang datanya sedikit.
+def sla_per_candidate(sf: pd.DataFrame) -> pd.Series:
+    """cand_key -> jumlah lead time seluruh tahap yang sudah punya durasi."""
+    ada = sf[sf["lt"].notna()]
+    return ada.groupby("cand_key")["lt"].sum()
+
+
+def stage_averages(sf: pd.DataFrame, by_name: pd.Series | None = None) -> dict:
+    """Rata-rata lead time per tahap, dipakai memperkirakan sisa proses.
+
+    Mengembalikan {"umum": {tahap: hari}, "per_pic": {(nama, tahap): hari}}.
+    Yang per-PIC dipakai lebih dulu supaya perkiraannya memakai kecepatan orang
+    yang benar-benar memegang kandidat itu; rata-rata umum hanya menambal tahap
+    yang orangnya belum pernah kerjakan.
+    """
+    ada = sf[sf["lt"].notna() & sf["applicable"]]
+    umum = ada.groupby("stage")["lt"].mean().to_dict()
+
+    per_pic = {}
+    if by_name is not None and len(by_name):
+        d = ada.copy()
+        d["_nm"] = d["cand_key"].map(by_name)
+        d = d[d["_nm"].notna()]
+        if len(d):
+            per_pic = d.groupby(["_nm", "stage"])["lt"].mean().to_dict()
+    return {"umum": umum, "per_pic": per_pic}
+
+
+def estimate_onboarding(sf: pd.DataFrame, cand_key: str, rata: dict,
+                        pic: str | None = None) -> dict:
+    """Perkiraan sisa hari kerja sampai onboarding untuk satu kandidat OPEN.
+
+    Hasilnya: {"sisa_tahap_ini", "tahap_berikutnya", "total", "rincian"}.
+    `rincian` menyebut tiap tahap dan sumber angkanya, supaya perkiraannya bisa
+    ditelusuri dan bukan sekadar satu angka yang muncul entah dari mana.
+    """
+    baris = sf[sf["cand_key"] == cand_key].sort_values("stage_no")
+    baris = baris[baris["applicable"]]
+    if baris.empty:
+        return {"sisa_tahap_ini": None, "tahap_berikutnya": None,
+                "total": None, "rincian": []}
+
+    def rata_tahap(tahap):
+        if pic is not None:
+            v = rata["per_pic"].get((pic, tahap))
+            if v is not None and pd.notna(v):
+                return float(v), "rata-rata PIC"
+        v = rata["umum"].get(tahap)
+        if v is not None and pd.notna(v):
+            return float(v), "rata-rata semua"
+        return None, None
+
+    rincian = []
+    sisa_ini = 0.0
+
+    # Tahap yang sedang berjalan: sudah mulai, belum selesai. Sisanya = budget
+    # dikurangi hari yang sudah terpakai, minimal nol — kalau sudah lewat budget,
+    # yang tersisa bukan angka negatif, tapi "tinggal diselesaikan".
+    jalan = baris[baris["start"].notna() & baris["end"].isna()]
+    for r in jalan.itertuples():
+        terpakai = working_days(pd.Series([r.start]),
+                                pd.Series([pd.Timestamp.today().normalize()])).iloc[0]
+        budget = float(r.budget) if pd.notna(r.budget) else None
+        if budget is None:
+            continue
+        sisa = max(budget - float(terpakai or 0), 0.0)
+        sisa_ini += sisa
+        rincian.append({"tahap": r.stage, "hari": round(sisa, 1),
+                        "dasar": f"sisa budget ({int(budget)} hari, "
+                                 f"terpakai {int(terpakai or 0)})"})
+
+    # Tahap yang belum mulai DAN memang masih di depan. Tahap yang nomornya lebih
+    # kecil dari tahap terjauh yang sudah dijalani bukan sisa pekerjaan — itu
+    # tahap yang dilewati atau tanggalnya tidak pernah diisi (PRF Approval paling
+    # sering). Menghitungnya sebagai sisa membuat perkiraannya kepanjangan.
+    sudah = baris[baris["start"].notna() | baris["end"].notna()]
+    batas = sudah["stage_no"].max() if len(sudah) else -1
+    belum = baris[baris["start"].isna() & baris["end"].isna()
+                  & (baris["stage_no"] > batas)]
+    berikut = 0.0
+    for r in belum.itertuples():
+        v, dasar = rata_tahap(r.stage)
+        if v is None:
+            v = float(r.budget) if pd.notna(r.budget) else None
+            dasar = "budget (belum ada riwayat)"
+        if v is None:
+            continue
+        berikut += v
+        rincian.append({"tahap": r.stage, "hari": round(v, 1), "dasar": dasar})
+
+    total = sisa_ini + berikut
+    return {"sisa_tahap_ini": round(sisa_ini, 1),
+            "tahap_berikutnya": round(berikut, 1),
+            "total": round(total, 1), "rincian": rincian}
+
+
+def estimate_all(sf: pd.DataFrame, df: pd.DataFrame,
+                 by_name: pd.Series | None = None) -> pd.Series:
+    """Perkiraan sisa hari untuk SEMUA kandidat OPEN sekaligus.
+
+    Versi borongan dari estimate_onboarding(), dipakai tabel yang menampilkan
+    banyak kandidat. Logikanya sama persis — dihitung vektor supaya halaman yang
+    berisi ratusan baris tidak memanggil fungsi per baris.
+    """
+    rata = stage_averages(sf, by_name)
+    buka = set(df[df["status1"] == "OPEN"]["cand_key"])
+    d = sf[sf["cand_key"].isin(buka) & sf["applicable"]].copy()
+    if d.empty:
+        return pd.Series(dtype=float)
+
+    hari_ini = pd.Timestamp.today().normalize()
+    jalan = d[d["start"].notna() & d["end"].isna() & d["budget"].notna()].copy()
+    if len(jalan):
+        terpakai = working_days(jalan["start"],
+                                pd.Series([hari_ini] * len(jalan), index=jalan.index))
+        jalan["_sisa"] = (jalan["budget"].astype(float) - terpakai.astype(float)).clip(lower=0)
+        sisa_ini = jalan.groupby("cand_key")["_sisa"].sum()
+    else:
+        sisa_ini = pd.Series(dtype=float)
+
+    # Batas per kandidat: tahap terjauh yang sudah dijalani. Lihat alasannya di
+    # estimate_onboarding().
+    dijalani = d[d["start"].notna() | d["end"].notna()]
+    batas = dijalani.groupby("cand_key")["stage_no"].max()
+    belum = d[d["start"].isna() & d["end"].isna()].copy()
+    belum = belum[belum["stage_no"] > belum["cand_key"].map(batas).fillna(-1)]
+    if len(belum):
+        nm = belum["cand_key"].map(by_name) if by_name is not None else None
+        if nm is not None:
+            belum["_pic"] = nm
+            belum["_v"] = [
+                rata["per_pic"].get((p, s), rata["umum"].get(s))
+                for p, s in zip(belum["_pic"], belum["stage"])
+            ]
+        else:
+            belum["_v"] = belum["stage"].map(rata["umum"])
+        belum["_v"] = belum["_v"].fillna(belum["budget"])
+        berikut = belum.groupby("cand_key")["_v"].sum()
+    else:
+        berikut = pd.Series(dtype=float)
+
+    total = sisa_ini.add(berikut, fill_value=0)
+    return total.round(1)
+
+
+# ===========================================================================
+# Summary by Division — MPP vs Actual vs proses rekrutmen
+# ===========================================================================
+# Menirukan sheet "Summary by Division" di spreadsheet Report, tapi bisa
+# ditelusuri: All -> site -> divisi -> level -> orangnya. Sheet aslinya berhenti
+# di Staff/Non Staff; level baru terlihat kalau pivot-nya dibongkar sendiri.
+#
+# Tiga sumber, tiga peran yang berbeda:
+#   MPP Reforecast      berapa yang DIRENCANAKAN  (Budget & Reforecast per posisi)
+#   Update Employee List berapa yang ADA sekarang  (karyawan aktif)
+#   Database kandidat    berapa yang SEDANG DIPROSES (pipeline rekrutmen)
+#
+# Divisi seorang karyawan diambil dari HURUF PERTAMA Position Code — aturan yang
+# sama dengan yang dipakai sheet aslinya. Sudah dicocokkan terhadap blok BCP:
+# seluruh divisi sama persis kecuali dua yang selisih satu orang karena snapshot
+# sheet-nya beda hari.
+def prepare_reforecast(df: pd.DataFrame) -> pd.DataFrame:
+    """Rapikan MPP Reforecast jadi (site, divisi, level, status, mpp)."""
+    d = df.copy()
+    d.columns = [str(c).strip() for c in d.columns]
+    out = pd.DataFrame({
+        "site": d["Loc"].astype(str).str.strip().str.upper(),
+        "divisi": d["Divisi"].astype(str).str.strip(),
+        "level_code": d["Level Code"].astype(str).str.strip(),
+        "status": d["Status"].astype(str).str.strip(),
+        "mpp": pd.to_numeric(d["Reforecast"], errors="coerce").fillna(0),
+        "budget": pd.to_numeric(d.get("Budget"), errors="coerce").fillna(0),
+    })
+    return out[out["divisi"].notna() & ~out["divisi"].isin(["nan", ""])]
+
+
+def prepare_headcount(emp: pd.DataFrame, kode_divisi: dict) -> pd.DataFrame:
+    """Karyawan AKTIF jadi (site, divisi, level, status) — satu baris satu orang.
+
+    Aktif = kolom End Date kosong. Yang sudah punya tanggal berhenti tidak
+    dihitung sebagai isi organisasi hari ini.
+    """
+    d = emp.copy()
+    d.columns = [str(c).strip() for c in d.columns]
+    akhir = d.get("End Date")
+    if akhir is not None:
+        kosong = akhir.isna() | akhir.astype(str).str.strip().isin(["", "nan", "NaT"])
+        d = d[kosong]
+
+    lvl = pd.to_numeric(d.get("Level"), errors="coerce")
+    out = pd.DataFrame({
+        "site": d["Location Name"].map(C.LOCATION_TO_SITE),
+        "divisi": (d["Position Code"].astype(str).str.strip().str[0]
+                     .map(kode_divisi)),
+        "level_code": lvl,
+        "status": lvl.map(lambda v: "Non Staff" if pd.notna(v) and v >= 11
+                          else "Staff" if pd.notna(v) else None),
+    })
+    return out[out["site"].notna() & out["divisi"].notna()]
+
+
+def _pipeline_per_grup(df: pd.DataFrame, kunci: list[str]) -> pd.DataFrame:
+    """Ringkasan proses rekrutmen per grup — dasar kolom monitoring."""
+    if df.empty:
+        return pd.DataFrame(columns=kunci + ["kandidat", "ongoing", "hired",
+                                             "pool", "gagal"])
+    baris = []
+    for nilai, g in df.groupby(kunci, dropna=False):
+        nilai = nilai if isinstance(nilai, tuple) else (nilai,)
+        baris.append({**dict(zip(kunci, nilai)), **_ringkas(g)})
+    return pd.DataFrame(baris)
+
+
+def division_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
+                     site: str | None = None, level_codes=None) -> pd.DataFrame:
+    """Satu baris per divisi: MPP, Actual, Gap, plus keadaan pipeline-nya.
+
+    `site` None berarti All. `level_codes` menyaring ke level tertentu, dipakai
+    saat drill-down sudah masuk ke satu level.
+    """
+    r, h = ref.copy(), hc.copy()
+    if site:
+        r, h = r[r["site"] == site], h[h["site"] == site]
+    if level_codes is not None:
+        kode = {str(x) for x in level_codes}
+        r = r[r["level_code"].isin(kode)]
+        h = h[h["level_code"].map(lambda v: str(int(v)) if pd.notna(v) else "").isin(kode)]
+
+    mpp = r.groupby("divisi")["mpp"].sum()
+    aktual = h.groupby("divisi").size()
+    pipe = _pipeline_per_grup(cand, ["divisi"]).set_index("divisi") if len(cand) else None
+
+    out = pd.DataFrame({"mpp": mpp}).join(aktual.rename("actual"), how="outer")
+    out[["mpp", "actual"]] = out[["mpp", "actual"]].fillna(0).astype(int)
+    out["gap"] = out["actual"] - out["mpp"]
+    for k in ("kandidat", "ongoing", "hired", "pool", "gagal"):
+        out[k] = (pipe[k] if pipe is not None and k in pipe else 0)
+        out[k] = out[k].reindex(out.index).fillna(0).astype(int)
+    out = out[(out[["mpp", "actual", "kandidat"]].sum(axis=1) > 0)]
+    return out.sort_values(["gap", "mpp"]).reset_index().rename(
+        columns={"index": "divisi"})
+
+
+def level_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
+                  divisi: str, site: str | None = None) -> pd.DataFrame:
+    """Sebaran satu divisi per LEVEL, urut dari level paling bawah ke atas."""
+    r = ref[ref["divisi"] == divisi]
+    h = hc[hc["divisi"] == divisi]
+    c = cand[cand["divisi"] == divisi] if len(cand) else cand
+    if site:
+        r, h = r[r["site"] == site], h[h["site"] == site]
+        c = c[c["site"] == site] if len(c) else c
+
+    # Dikelompokkan berdasarkan NAMA level, bukan kodenya: level 7 dan 6 sama-sama
+    # "Manager", dan menampilkannya sebagai dua baris Manager yang berbeda hanya
+    # membingungkan pembaca yang tidak tahu kode di baliknya.
+    r = r.copy()
+    r["_k"] = r["level_code"].map(C.level_name)
+    mpp = r.groupby("_k")["mpp"].sum()
+
+    h = h.copy()
+    h["_k"] = h["level_code"].map(C.level_name)
+    aktual = h.groupby("_k").size()
+
+    pipe = None
+    if len(c):
+        c = c.copy()
+        c["_k"] = c["level_code"].map(C.level_name)
+        pipe = _pipeline_per_grup(c, ["_k"]).set_index("_k")
+
+    out = pd.DataFrame({"mpp": mpp}).join(aktual.rename("actual"), how="outer")
+    out[["mpp", "actual"]] = out[["mpp", "actual"]].fillna(0).astype(int)
+    out["gap"] = out["actual"] - out["mpp"]
+    for k in ("kandidat", "ongoing", "hired", "pool", "gagal"):
+        out[k] = (pipe[k] if pipe is not None and k in pipe else 0)
+        out[k] = out[k].reindex(out.index).fillna(0).astype(int)
+
+    out = out[(out[["mpp", "actual", "kandidat"]].sum(axis=1) > 0)]
+    # Indeksnya gabungan dua sumber, jadi namanya belum tentu "level_code";
+    # disebut eksplisit supaya tidak bergantung pada nama bawaan pandas.
+    out.index.name = "level"
+    out = out.reset_index()
+
+    # Urutan tampil mengikuti LEVEL_ORDER, dari level paling bawah ke paling atas.
+    urut = {}
+    for i, k in enumerate(C.LEVEL_ORDER):
+        urut.setdefault(C.level_name(k), i)
+    out["_u"] = out["level"].map(lambda v: urut.get(v, 99))
+    # Kode level pertama yang memakai nama itu — dipakai menyaring saat detail
+    # level dibuka.
+    kode_pertama = {}
+    for k in C.LEVEL_ORDER:
+        kode_pertama.setdefault(C.level_name(k), k)
+    out["level_code"] = out["level"].map(kode_pertama)
+    return out.sort_values("_u").drop(columns="_u").reset_index(drop=True)
+
+
+def candidate_level_code(df: pd.DataFrame) -> pd.Series:
+    """Level kandidat (teks) -> kode angka, supaya bisa disandingkan dengan MPP."""
+    balik = {}
+    for kode, nama in C.LEVEL_CODE_NAMES.items():
+        balik.setdefault(nama.strip().lower(), kode)
+    # Sebutan di database kandidat tidak selalu sama persis dengan peta di atas.
+    balik.update({
+        "junior staff": 10, "jr. staff": 10, "jr staff": 10, "foreman": 10,
+        "supervisor": 9, "superintendent": 8, "manager": 7,
+        "general manager": 5, "non staff": 11, "boards": 1, "commisioner": 0,
+    })
+    return df["level"].astype(str).str.strip().str.lower().map(balik)

@@ -296,3 +296,46 @@ def load_position_master(source: str | pd.DataFrame | None = None) -> dict[str, 
         }
     except Exception:
         return kosong
+
+
+def load_mpp_reforecast(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
+    """Sheet "MPP Reforecast" — rencana headcount per posisi.
+
+    Satu baris = satu posisi di satu site, dengan Budget dan Reforecast. Kolom
+    Actual di sheet ini kosong; angka aktual dihitung sendiri dari daftar
+    karyawan (lihat metrics.division_summary).
+    """
+    if isinstance(source, pd.DataFrame):
+        return source.copy()
+    df, _ = _try_sources([
+        ("argumen langsung", source or ""),
+        ("env MPP_REFORECAST_CSV", os.environ.get("MPP_REFORECAST_CSV", "")),
+        ("export by gid", C.gsheet_gid_url(C.MPP_GID_REFORECAST, C.MPP_SPREADSHEET_ID)),
+        ("gviz by nama tab", C.gsheet_csv_url(
+            C.MPP_SHEET_REFORECAST, C.MPP_SPREADSHEET_ID)),
+    ], require=["Loc", "Level Code", "Status", "Divisi", "Reforecast"])
+    return df
+
+
+def load_division_code(source: str | pd.DataFrame | None = None) -> dict[str, str]:
+    """Huruf kode divisi -> nama divisi, dari sheet "Code Divisi".
+
+    Dipakai menentukan divisi seorang karyawan: huruf PERTAMA Position Code
+    adalah kode divisinya. Itu aturan yang sama dengan yang dipakai sheet
+    Summary by Division, dan sudah dicocokkan — hasilnya sama persis untuk
+    seluruh divisi BCP kecuali dua yang selisih satu orang karena snapshot-nya
+    beda hari.
+    """
+    try:
+        if isinstance(source, pd.DataFrame):
+            df = source
+        else:
+            df, _ = _try_sources([
+                ("argumen langsung", source or ""),
+                ("export by gid", C.gsheet_gid_url(
+                    C.REPORT_GIDS["Code Divisi"], C.REPORT_SPREADSHEET_ID)),
+            ], require=["Division", "Code"])
+        return dict(zip(df["Code"].astype(str).str.strip(),
+                        df["Division"].astype(str).str.strip()))
+    except Exception:
+        return {}
