@@ -1528,6 +1528,66 @@ def sla_per_candidate(sf: pd.DataFrame) -> pd.Series:
     return ada.groupby("cand_key")["lt"].sum()
 
 
+def estimate_date(days, base=None):
+    """Sisa hari kerja -> TANGGAL perkiraan onboarding.
+
+    Navi minta targetnya dibaca sebagai tanggal, bukan "berapa hari lagi":
+    "11 hari" tidak menjawab kapan, "23 Sep 2026" menjawab. Angkanya
+    DIBULATKAN KE ATAS — setengah hari kerja tetap butuh satu hari kerja, dan
+    perkiraan yang kepagian lebih merugikan daripada yang kesorean.
+
+    Kalender liburnya sama dengan yang dipakai seluruh lead time, jadi tanggal
+    yang keluar tidak pernah jatuh di Sabtu, Minggu, atau libur nasional.
+    """
+    import math
+    import numpy as np
+    if days is None or (isinstance(days, float) and pd.isna(days)) or pd.isna(days):
+        return None
+    n = max(int(math.ceil(float(days))), 0)
+    awal = pd.Timestamp(base).normalize() if base is not None else pd.Timestamp.today().normalize()
+    hasil = np.busday_offset(awal.to_numpy().astype("datetime64[D]"), n,
+                             roll="forward", holidays=_holidays())
+    return pd.Timestamp(hasil)
+
+
+def estimate_dates(days: pd.Series, base=None) -> pd.Series:
+    """Versi borongan estimate_date() untuk kolom tabel."""
+    if days is None or not len(days):
+        return pd.Series(dtype="datetime64[ns]")
+    return days.map(lambda v: estimate_date(v, base))
+
+
+def average_to_hire(sf: pd.DataFrame, df: pd.DataFrame | None = None) -> dict:
+    """Rata-rata TOTAL waktu sampai onboarding = jumlah rata-rata TIAP tahap.
+
+    Arahan Navi (7 Sep 2026): "sla screening total dirata-ratakan + rata-rata
+    sla interview + rata-rata sla masing-masing stage, termasuk routing PRF".
+    Jadi tiap tahap dirata-rata DULU, baru dijumlahkan — bukan seluruh durasi
+    dikumpulkan lalu dirata-rata sekali.
+
+    Bedanya nyata: tahap yang datanya sedikit (Psychotest, Technical Test) akan
+    tenggelam kalau semuanya dicampur, padahal tahap itu justru yang paling
+    sering jadi penyebab molor. Dengan cara ini tiap tahap punya bobot yang
+    sama besar dalam angka akhirnya.
+
+    Hasil: {"total", "per_stage" [(tahap, hari, n)], "n_stage", "n_cand"}.
+    """
+    ada = sf[sf["lt"].notna() & sf["applicable"] & (sf["lt"] > 0)]
+    if ada.empty:
+        return {"total": None, "per_stage": [], "n_stage": 0, "n_cand": 0}
+
+    rata = ada.groupby("stage")["lt"].mean()
+    jumlah = ada.groupby("stage")["lt"].size()
+    urut = [s for s in STAGE_ORDER if s in rata.index and s != "Onboarding"]
+    per_stage = [(s, float(rata[s]), int(jumlah[s])) for s in urut]
+    return {
+        "total": float(sum(v for _s, v, _n in per_stage)) if per_stage else None,
+        "per_stage": per_stage,
+        "n_stage": len(per_stage),
+        "n_cand": int(ada["cand_key"].nunique()),
+    }
+
+
 def stage_averages(sf: pd.DataFrame, by_name: pd.Series | None = None) -> dict:
     """Rata-rata lead time per tahap, dipakai memperkirakan sisa proses.
 
@@ -1732,6 +1792,105 @@ def _pipeline_per_grup(df: pd.DataFrame, kunci: list[str]) -> pd.DataFrame:
         nilai = nilai if isinstance(nilai, tuple) else (nilai,)
         baris.append({**dict(zip(kunci, nilai)), **_ringkas(g)})
     return pd.DataFrame(baris)
+
+
+# ---------------------------------------------------------------------------
+# Sebaran per proses — On Progress / Passed / Failed untuk empat tahap kunci
+# ---------------------------------------------------------------------------
+# Navi minta Summary by Division bisa digeser ke kanan sampai kelihatan
+# "Interview User berapa, Psikotest berapa, Offering berapa, MCU berapa", tiap
+# tahap dipecah tiga. Empat tahap ini yang dipilih karena di situlah kandidat
+# paling sering tertahan — Screening CV terlalu di depan (hampir semua orang
+# lewat), Onboarding terlalu di belakang (sudah jadi angka hired).
+PROCESS_STAGES = ["Interview User", "Psychotest", "Offering", "MCU"]
+PROCESS_SLUG = {"Interview User": "iu", "Psychotest": "psy",
+                "Offering": "off", "MCU": "mcu"}
+PROCESS_KINDS = ["progress", "passed", "failed"]
+
+# Kolom Result tiap tahap memakai kosakata yang berbeda-beda: Interview User
+# menulis PASSED/FAILED, Offering menulis ACCEPTED/DECLINE/WITHDRAWN. Dipetakan
+# ke tiga keadaan yang sama supaya kolomnya bisa dibaca berdampingan.
+_HASIL_LULUS = {"PASSED", "PASS", "ACCEPTED", "ACCEPT", "LULUS", "TALENT POOL"}
+_HASIL_GAGAL = {"FAILED", "FAIL", "DECLINE", "DECLINED", "REJECTED", "REJECT",
+                "WITHDRAWN", "WITHDRAW", "TIDAK LULUS", "CANCEL", "CANCELLED"}
+_HASIL_JALAN = {"ON PROGRESS", "ONPROGRESS", "PROGRESS", "HOLD", "PENDING",
+                "SCHEDULED", "RESCHEDULE"}
+
+
+def stage_outcome(sf: pd.DataFrame, df: pd.DataFrame) -> pd.Series:
+    """Keadaan tiap (kandidat, tahap): 'progress' / 'passed' / 'failed' / NA.
+
+    Dua sumber, dengan urutan yang jelas:
+      1. Kolom Result kalau tahapnya punya — itu keputusan yang ditulis manusia.
+      2. Kalau tidak ada (MCU tidak punya kolom Result sama sekali, dan tahap
+         lain pun sering dikosongkan), keadaannya disimpulkan dari TANGGAL:
+         sudah mulai belum selesai = berjalan; sudah selesai dan kandidat
+         lanjut ke tahap berikutnya = lulus; sudah selesai, tidak lanjut, dan
+         kandidatnya FAILED = gagal di sini.
+
+    Tahap yang belum pernah disentuh sama sekali menghasilkan NA — bukan nol —
+    supaya "belum sampai ke sini" tidak tercampur dengan "sampai sini lalu
+    gagal".
+    """
+    d = sf
+    hasil = pd.Series(pd.NA, index=d.index, dtype=object)
+
+    res = d["result"].astype(str).str.strip().str.upper() if "result" in d else None
+    if res is not None:
+        hasil = hasil.mask(res.isin(_HASIL_LULUS), "passed")
+        hasil = hasil.mask(res.isin(_HASIL_GAGAL), "failed")
+        hasil = hasil.mask(res.isin(_HASIL_JALAN), "progress")
+
+    disentuh = d["start"].notna() | d["end"].notna()
+    berjalan = d["start"].notna() & d["end"].isna()
+    hasil = hasil.mask(hasil.isna() & berjalan, "progress")
+
+    # Tahap terjauh yang punya tanggal, per kandidat: dipakai menilai apakah
+    # kandidat benar-benar melewati tahap ini atau berhenti di sini.
+    terjauh = d[disentuh].groupby("cand_key")["stage_no"].max()
+    lanjut = d["cand_key"].map(terjauh) > d["stage_no"]
+
+    stat = d["cand_key"].map(df.drop_duplicates("cand_key")
+                             .set_index("cand_key")["status1"])
+    selesai = d["end"].notna() & hasil.isna()
+    hasil = hasil.mask(selesai & lanjut, "passed")
+    hasil = hasil.mask(selesai & ~lanjut & stat.eq("FAILED"), "failed")
+    hasil = hasil.mask(selesai & ~lanjut & ~stat.eq("FAILED"), "passed")
+    return hasil
+
+
+def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame,
+                      grup: pd.Series) -> pd.DataFrame:
+    """Hitung On Progress / Passed / Failed per grup untuk PROCESS_STAGES.
+
+    `grup`: Series ber-index cand_key, isinya label grup (divisi, level, dsb).
+    Hasilnya satu baris per label, kolom rata: iu_progress, iu_passed, ...
+    """
+    kolom = [f"{sl}_{k}" for sl in PROCESS_SLUG.values() for k in PROCESS_KINDS]
+    kosong = pd.DataFrame(columns=["_grup"] + kolom)
+    if grup is None or not len(grup) or sf.empty:
+        return kosong
+
+    d = sf[sf["stage"].isin(PROCESS_STAGES)].copy()
+    if d.empty:
+        return kosong
+    d["_o"] = stage_outcome(d, df)
+    d["_grup"] = d["cand_key"].map(grup)
+    d = d[d["_grup"].notna() & d["_o"].notna()]
+    if d.empty:
+        return kosong
+
+    tabel = (d.groupby(["_grup", "stage", "_o"])["cand_key"].nunique()
+              .unstack(fill_value=0))
+    out = pd.DataFrame(index=sorted(d["_grup"].unique()))
+    for tahap, sl in PROCESS_SLUG.items():
+        for k in PROCESS_KINDS:
+            try:
+                kol = tabel.xs(tahap, level="stage")[k]
+            except KeyError:
+                kol = pd.Series(0, index=out.index)
+            out[f"{sl}_{k}"] = kol.reindex(out.index).fillna(0).astype(int)
+    return out.reset_index().rename(columns={"index": "_grup"})
 
 
 def division_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,

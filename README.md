@@ -641,11 +641,33 @@ Meniru sheet **Summary by Division** milik tim, tapi bisa ditelusuri: sheet
 aslinya berhenti di Staff/Non Staff, dan level baru terlihat kalau pivot-nya
 dibongkar sendiri.
 
-Urutannya seperti grouping di Excel: **All → site → divisi → level → posisi &
-orang**. Klik divisi untuk membukanya per level, lalu pilih level untuk melihat
-posisi dan siapa yang sedang diproses. Expander tidak bisa ditumpuk di Streamlit,
-jadi tingkat ketiga dipilih lewat kontrol di dalam expander divisi — klik kedua
-tetap ada, tanpa memaksa Streamlit melakukan yang tidak bisa.
+Sejak 8 Sep 2026 halaman ini ada di urutan **kedua**, tepat setelah Overview,
+dan bentuknya **satu tabel yang bisa di-grup seperti Excel** — bukan lagi dua
+puluh enam expander yang berdiri sendiri-sendiri.
+
+**Cara bacanya:** klik `[+]` di depan nama divisi, baris levelnya muncul tepat di
+bawahnya **dalam kolom yang sama persis**. Buka-tutupnya murni CSS (checkbox
+tersembunyi + selector `~`), jadi tidak ada rerun Streamlit sama sekali —
+sebelumnya tiap klik expander memaksa halaman menghitung ulang MPP, daftar
+karyawan, dan seluruh pipeline.
+
+**Kolom pertama dibekukan** (freeze pane) dan tabelnya bisa digeser ke kanan
+sampai kolom proses: **Interview User · Psychotest · Offering · MCU**, masing-
+masing dipecah **On progress / Passed / Failed**. Baris TOTAL menempel di dasar
+tabel. Petunjuk gesernya ditulis di kanan atas tabel.
+
+Empat tahap itu yang dipilih karena di situlah kandidat paling sering tertahan —
+Screening CV terlalu di depan (hampir semua orang lewat), Onboarding terlalu di
+belakang (sudah jadi angka Onboarding). Keadaan tiap tahap dibaca dari kolom
+Result kalau ada; MCU tidak punya kolom Result sama sekali, jadi keadaannya
+disimpulkan dari tanggal: sudah mulai belum selesai = berjalan, sudah selesai dan
+kandidat lanjut ke tahap berikutnya = lulus, sudah selesai tapi berhenti di sini
+dan kandidatnya FAILED = gagal di sini. Tahap yang belum pernah disentuh tidak
+dihitung sama sekali — "belum sampai ke sini" bukan "gagal di sini".
+
+Tingkat ketiga (**posisi & orangnya**) ada di bawah tabel, dipilih lewat dua
+dropdown: Divisi lalu Level. Isinya daftar nama, dan daftar nama di dalam kolom
+angka tidak terbaca — jadi sengaja tidak dijadikan baris tabel.
 
 **Tiga sumber, tiga peran yang berbeda:**
 
@@ -679,9 +701,21 @@ tanggal ujung ke ujung. Kandidat OPEN dan FAILED belum punya tanggal onboarding,
 jadi cara lama membuat kolomnya kosong padahal prosesnya jelas sudah memakan
 waktu. Hasilnya: terisi untuk **2.205 kandidat**, dari sebelumnya 451.
 
-**Estimasi onboarding** muncul sebagai kartu keempat di Tracking Kandidat untuk
-kandidat yang masih OPEN, dan sebagai angka oranye di kolom "SLA / target" di
-Tracking Posisi. Cara hitungnya:
+**Estimate Onboarding** adalah **tanggal**, bukan jumlah hari (arahan Navi,
+8 Sep 2026): "11 hari lagi" memaksa pembacanya menghitung sendiri dan hitungannya
+salah kalau ada libur di tengah. Sisa harinya **dibulatkan ke atas** — setengah
+hari kerja tetap butuh satu hari kerja — lalu dijadikan tanggal memakai kalender
+libur yang sama dengan seluruh lead time portal ini, jadi tanggalnya tidak pernah
+jatuh di Sabtu, Minggu, atau libur nasional.
+
+Tampil di dua tempat: sebagai **kartu keempat** di Tracking Kandidat (tanggalnya
+jadi angka besar, sisa harinya di bawahnya) dan sebagai **kolom tersendiri**
+bernama "Estimate Onboarding" di Tracking Posisi (Per Posisi & Per Departemen)
+serta di tabel detail Summary by Division. Kolom itu dipisah dari "SLA / target"
+supaya keduanya bisa dibaca berdampingan; yang sudah CLOSE atau FAILED ditulis
+"selesai", karena perkiraan untuk proses yang sudah berhenti bukan informasi.
+
+Cara hitung sisa harinya:
 
 1. sisa budget tahap yang sedang berjalan (budget − hari terpakai, minimal nol);
 2. ditambah rata-rata tiap tahap yang **belum dijalani**.
@@ -698,8 +732,27 @@ diisi (PRF Approval paling sering), dan menghitungnya membuat perkiraannya
 kepanjangan.
 
 Di tabel, kolom **SLA / target** selalu terisi: angka kiri hari kerja yang sudah
-terpakai, angka kanan perkiraan sisa (oranye, untuk yang OPEN) atau budget SLA
-level itu (abu, untuk yang sudah selesai).
+terpakai (dijumlahkan dari tiap tahap, jadi yang OPEN dan FAILED pun punya
+angka), angka kanan abu adalah budget SLA level itu.
+
+## Average to hire
+
+Kartu keempat di Overview. Menggantikan "Median time-to-hire" atas arahan Navi
+(8 Sep 2026), dan cara hitungnya memang berbeda, bukan sekadar ganti nama:
+
+> rata-rata SLA screening + rata-rata SLA interview + rata-rata SLA masing-masing
+> stage, termasuk routing PRF
+
+Jadi **tiap tahap dirata-rata dulu, baru dijumlahkan** — bukan seluruh durasi
+kandidat dikumpulkan lalu dirata-rata sekali. Bedanya nyata: tahap yang datanya
+sedikit (Psychotest, Technical Test) akan tenggelam kalau semuanya dicampur,
+padahal tahap itu yang paling sering jadi penyebab molor. Dengan cara ini tiap
+tahap punya bobot yang sama besar.
+
+Sebelas tahap ikut, dari PRF Approval sampai One Month Notice; Onboarding tidak
+dihitung karena tanggal mulai dan selesainya sama. Angka hari ini: **43,3 hari
+kerja**. Rinciannya ditulis lengkap di catatan bawah kartu, jadi kalau angkanya
+naik, tahap mana yang naik langsung kelihatan.
 
 ## Backup candidate
 

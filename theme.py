@@ -2041,7 +2041,222 @@ def stat_inline(items: list[tuple[str, str]]) -> str:
     return f'<div class="dh-statinline">{isi}</div>'
 
 
+# ===========================================================================
+# Tabel bisa di-grup — meniru grouping Excel
+# ===========================================================================
+# Permintaan Navi (7 Sep 2026): Summary by Division dibaca seperti sheet Excel
+# yang barisnya bisa di-plus lalu detailnya muncul TEPAT DI BAWAHNYA, dalam
+# kolom yang sama. Tiga hal yang membuatnya terbaca:
+#   1. buka/tutup tanpa reload — Streamlit expander memaksa rerun seluruh
+#      halaman untuk setiap klik, dan halaman ini menghitung MPP + karyawan +
+#      pipeline, jadi tiap klik terasa berat. Di sini buka/tutup murni CSS:
+#      checkbox tersembunyi + selector `~`, tanpa JavaScript dan tanpa rerun.
+#   2. kolom pertama dibekukan (freeze pane) — nama divisi tetap terlihat saat
+#      tabelnya digeser ke kanan, kalau tidak, deretan angka jadi tak bertuan.
+#   3. header dua tingkat — "Interview User" di atas, "On Prog / Passed /
+#      Failed" di bawahnya, supaya dua belas kolom proses tidak terbaca sebagai
+#      dua belas kolom yang tidak berhubungan.
+_GROUP_CSS = """
+<style>
+.dh-gtbox { position:relative; margin:2px 0 4px; }
+.dh-gt-cb { display:none; }
+.dh-gthint {
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  font-size:11px; font-weight:700; color:__SOFT__; padding:0 2px 7px;
+}
+.dh-gthint .aksi { color:__ORANGE__; }
+.dh-gtwrap {
+  overflow:auto; border:1px solid __BORDER__; border-radius:10px;
+  background:__CARD__;
+}
+.dh-gt { border-collapse:separate; border-spacing:0; font-size:12px;
+  width:max-content; min-width:100%; }
+.dh-gt th {
+  background:__NAVY__; color:#fff; font-size:9.5px; font-weight:700;
+  letter-spacing:.07em; text-transform:uppercase; padding:6px 10px;
+  white-space:nowrap; position:sticky; top:0; z-index:4; height:26px;
+}
+.dh-gt tr.h2 th { top:26px; background:__NAVY__; font-size:9px; height:24px;
+  letter-spacing:.04em; opacity:.97; border-top:1px solid rgba(255,255,255,.16); }
+.dh-gt th.grp { text-align:center; }
+.dh-gt th.sep, .dh-gt td.sep { border-left:1px solid __BORDER__; }
+.dh-gt th.sep { border-left:1px solid rgba(255,255,255,.24); }
+.dh-gt td {
+  padding:6px 10px; border-bottom:1px solid __BSOFT__; white-space:nowrap;
+  color:__TEXT__; font-variant-numeric:tabular-nums; background:__CARD__;
+}
+.dh-gt .frz {
+  position:sticky; left:0; z-index:3; text-align:left;
+  box-shadow:1px 0 0 __BORDER__; min-width:230px;
+}
+.dh-gt th.frz { z-index:6; }
+.dh-gt .r { text-align:right; }
+.dh-gt .l { text-align:left; }
+.dh-gt tbody tr.main > td { font-weight:700; }
+.dh-gt tbody tr.main:hover > td { background:__WASH__; }
+.dh-gt tbody tr.sub { display:none; }
+.dh-gt tbody tr.sub > td {
+  background:__WASH__; color:__MUTED__; font-weight:600;
+  border-bottom:1px dashed __BORDER__;
+}
+.dh-gt tbody tr.sub > td.frz { padding-left:34px; }
+.dh-gt tbody tr.sub.judul > td {
+  background:__TINT__; color:__ODEEP__; font-size:9.5px; font-weight:800;
+  letter-spacing:.07em; text-transform:uppercase;
+}
+.dh-gt tbody tr.total > td {
+  background:__NAVY__ !important; color:#fff !important; font-weight:800;
+  border-bottom:none; position:sticky; bottom:0; z-index:3;
+}
+/* Sel kiri baris TOTAL menempel di dua arah sekaligus (kiri + bawah), jadi
+   z-index-nya harus di atas sel angka di kanannya — kalau tidak, angka MPP
+   menimpanya begitu tabelnya digeser. */
+.dh-gt tbody tr.total > td.frz { z-index:5; }
+/* Baris divisi diselang-seling tipis: dengan dua puluh dua kolom, mata perlu
+   pegangan horizontal supaya tidak pindah baris di tengah jalan. */
+.dh-gt tbody tr.main:nth-of-type(odd) > td { background:#FBFCFE; }
+.dh-gt tbody tr.main > td.frz { border-right:1px solid __BORDER__; }
+.dh-gt tbody tr.sub > td.frz { border-right:1px solid __BORDER__; }
+.dh-gt-tg {
+  display:inline-flex; width:16px; height:16px; margin-right:9px; cursor:pointer;
+  align-items:center; justify-content:center; border-radius:4px;
+  border:1px solid __BORDER__; background:__WASH__; color:__ORANGE__;
+  font-weight:800; font-size:12px; line-height:1; vertical-align:-3px;
+  user-select:none;
+}
+.dh-gt-tg::before { content:"+"; }
+.dh-gt-tg:hover { border-color:__ORANGE__; background:__TINT__; }
+.dh-gtfoot { font-size:11px; color:__SOFT__; padding:7px 2px 0; font-weight:600; }
+</style>
+"""
+
+
+def group_css() -> str:
+    return (_GROUP_CSS
+            .replace("__TEXT__", NEUTRAL["text"])
+            .replace("__MUTED__", NEUTRAL["text_muted"])
+            .replace("__SOFT__", NEUTRAL["text_soft"])
+            .replace("__BORDER__", NEUTRAL["border"])
+            .replace("__BSOFT__", NEUTRAL["border_soft"])
+            .replace("__CARD__", NEUTRAL["card"])
+            .replace("__WASH__", NEUTRAL["wash"])
+            .replace("__NAVY__", BRAND["navy"])
+            .replace("__ODEEP__", BRAND["orange_deep"])
+            .replace("__ORANGE__", BRAND["orange"])
+            .replace("__TINT__", tint(BRAND["orange"], .93)))
+
+
+def group_table(key: str, kolom: list[dict], baris: list[dict],
+                tinggi: int = 560, petunjuk: str = "",
+                total: list | None = None) -> str:
+    """Tabel dengan baris yang bisa dibuka-tutup, header dua tingkat, kolom
+    pertama dibekukan.
+
+    kolom : [{"label", "align" ("l"/"r"), "frozen", "sub" [judul anak], "sep"}]
+            Kolom ber-"sub" tampil sebagai satu judul yang menaungi beberapa
+            kolom anak — dipakai untuk Interview User / Psychotest / Offering /
+            MCU yang masing-masing dipecah On Prog / Passed / Failed.
+    baris : [{"cells": [...], "detail": [[...], ...], "detail_head": [...]}]
+            "cells" harus sepanjang jumlah kolom terpakai (kolom ber-sub
+            dihitung sebanyak anaknya). Isi sel dianggap SUDAH di-escape.
+    """
+    # Daftar kolom datar + perataannya, dipakai baris utama maupun detail.
+    rata, sep = [], []
+    for k in kolom:
+        anak = k.get("sub") or [None]
+        for i, _a in enumerate(anak):
+            rata.append(k.get("align", "r"))
+            sep.append(bool(k.get("sep")) and i == 0)
+
+    def kelas(i, beku_pertama=True):
+        c = ["r" if rata[i] == "r" else "l"]
+        if i == 0 and beku_pertama:
+            c.append("frz")
+        if sep[i]:
+            c.append("sep")
+        return " ".join(c)
+
+    # ── header dua tingkat
+    h1, h2 = [], []
+    idx = 0
+    for k in kolom:
+        anak = k.get("sub")
+        cls = []
+        if idx == 0:
+            cls.append("frz")
+        if k.get("sep"):
+            cls.append("sep")
+        if anak:
+            cls.append("grp")
+            h1.append(f'<th colspan="{len(anak)}" class="{" ".join(cls)}">'
+                      f"{html.escape(str(k['label']))}</th>")
+            for j, a in enumerate(anak):
+                c2 = "r" if k.get("align", "r") == "r" else "l"
+                if k.get("sep") and j == 0:
+                    c2 += " sep"
+                h2.append(f'<th class="{c2}">{html.escape(str(a))}</th>')
+            idx += len(anak)
+        else:
+            cls.append("r" if k.get("align", "r") == "r" else "l")
+            h1.append(f'<th rowspan="2" class="{" ".join(cls)}">'
+                      f"{html.escape(str(k['label']))}</th>")
+            idx += 1
+
+    # ── isi
+    kotak, body = [], []
+    for i, b in enumerate(baris):
+        cid = f"gt_{key}_{i}"
+        punya = bool(b.get("detail"))
+        sel = list(b["cells"])
+        if punya:
+            kotak.append(f'<input type="checkbox" class="dh-gt-cb" id="{cid}">')
+            sel[0] = f'<label class="dh-gt-tg" for="{cid}"></label>{sel[0]}'
+        else:
+            # Baris tanpa detail tetap diberi lekukan selebar tombolnya, supaya
+            # nama divisinya sejajar dengan yang punya tombol.
+            sel[0] = ('<span class="dh-gt-tg" style="visibility:hidden">'
+                      f"</span>{sel[0]}")
+        body.append(f'<tr class="main">' + "".join(
+            f'<td class="{kelas(j)}">{v}</td>' for j, v in enumerate(sel)) + "</tr>")
+
+        if punya:
+            kepala = b.get("detail_head")
+            if kepala:
+                body.append(f'<tr class="sub judul g-{cid}">' + "".join(
+                    f'<td class="{kelas(j)}">{html.escape(str(v))}</td>'
+                    for j, v in enumerate(kepala)) + "</tr>")
+            for d in b["detail"]:
+                body.append(f'<tr class="sub g-{cid}">' + "".join(
+                    f'<td class="{kelas(j)}">{v}</td>' for j, v in enumerate(d))
+                    + "</tr>")
+
+    if total:
+        body.append('<tr class="total">' + "".join(
+            f'<td class="{kelas(j)}">{v}</td>' for j, v in enumerate(total))
+            + "</tr>")
+
+    aturan = "".join(
+        f'#gt_{key}_{i}:checked ~ .dh-gtwrap tr.g-gt_{key}_{i}{{display:table-row}}'
+        f'#gt_{key}_{i}:checked ~ .dh-gtwrap label[for="gt_{key}_{i}"]::before'
+        '{content:"\\2212"}'
+        for i, b in enumerate(baris) if b.get("detail"))
+
+    kepala_hint = ""
+    if petunjuk:
+        kepala_hint = (f'<div class="dh-gthint"><span>{petunjuk}</span>'
+                       '<span class="aksi">⇄ tabel bisa digeser ke kanan — '
+                       'kolom divisi tetap di tempat</span></div>')
+
+    return (f"<style>{aturan}</style>{kepala_hint}"
+            f'<div class="dh-gtbox">{"".join(kotak)}'
+            f'<div class="dh-gtwrap" style="max-height:{tinggi}px">'
+            f'<table class="dh-gt"><thead><tr class="h1">{"".join(h1)}</tr>'
+            f'<tr class="h2">{"".join(h2)}</tr></thead>'
+            f'<tbody>{"".join(body)}</tbody></table></div></div>')
+
+
 def inject_portal_css():
     """CSS tambahan khas portal. Panggil SETELAH inject_css()."""
     import streamlit as st
     st.markdown(STAGE_CSS, unsafe_allow_html=True)
+    st.markdown(group_css(), unsafe_allow_html=True)
