@@ -84,13 +84,13 @@ def require_login() -> str:
 
     left, mid, right = st.columns([1, 1.15, 1])
     with mid:
-        with theme.card("login", "Masuk", "Portal ini berisi data kandidat. Masukkan password tim."):
+        with theme.card("login", "Sign in", "This portal holds candidate data. Enter your team password."):
             entered = st.text_input(
                 "Password", type="password", key="auth_input",
-                placeholder="Password Recruitment atau User",
+                placeholder="Recruitment or User password",
                 label_visibility="collapsed",
             )
-            submit = st.button("Masuk", type="primary", width="stretch", key="auth_submit")
+            submit = st.button("Sign in", type="primary", width="stretch", key="auth_submit")
 
             if submit:
                 matched = _match(entered) if entered else None
@@ -99,12 +99,12 @@ def require_login() -> str:
                     st.rerun()
                 else:
                     # Sengaja tidak memberi tahu password mana yang hampir benar.
-                    st.error("Password tidak cocok. Hubungi tim Recruitment kalau lupa.")
+                    st.error("That password does not match. Ask the Recruitment team if you have forgotten it.")
 
             st.markdown(
                 theme.inline_note(
-                    "<b>Recruitment</b> membuka seluruh fungsi. "
-                    "<b>User</b> membuka Overview, Tracking, dan Weekly Report."
+                    "<b>Recruitment</b> unlocks everything. "
+                    "<b>User</b> unlocks Overview, Tracking and the Weekly Report."
                 ),
                 unsafe_allow_html=True,
             )
@@ -115,4 +115,4 @@ def require_login() -> str:
 def role_badge() -> str:
     """Chip peran untuk ditaruh di header band."""
     role = current_role()
-    return f"Masuk sebagai <b>{C.ROLE_LABEL.get(role, '—')}</b>"
+    return f"Signed in as <b>{C.ROLE_LABEL.get(role, '—')}</b>"

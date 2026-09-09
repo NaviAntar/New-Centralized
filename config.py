@@ -83,7 +83,7 @@ def level_name(code) -> str:
         return LEVEL_CODE_NAMES[int(float(code))]
     except (TypeError, ValueError, KeyError):
         teks = str(code or "").strip()
-        return teks if teks and teks.lower() != "nan" else "Belum ada level"
+        return teks if teks and teks.lower() != "nan" else "No level"
 
 
 # Nama lokasi panjang -> kode site, dipakai menyamakan sheet MPP/karyawan dengan
@@ -125,7 +125,35 @@ REPORT_GIDS = {
     "Update MPP": "504172347",
     "Summary by Division": "856663966",
     "Code Divisi": "482521119",
+    "Copy of Summary by Division": "68955289",
 }
+
+# ── Sumber Summary by Division (arahan Navi, 8 Sep 2026) ───────────────────
+# Rumus di tab "Copy of Summary by Division" adalah acuan resminya:
+#
+#   MPP    = SUMIFS(MPP2!Reforecast; MPP2!Divisi; MPP2!Loc; MPP2!Status)
+#   Actual = COUNTIFS('Existing Employee'!Division; Level "<11" (Staff) atau
+#            "=11" (Non Staff); Loc)
+#   ADP    = COUNTIFS(ADP!Division; ADP!Lokasi; ADP!Status)
+#   Need to Hire = ADP + Gap − FTAP
+#
+# Tiga tab ini ada di spreadsheet Report yang sama. gid-nya belum diketahui,
+# jadi diambil lewat nama tab — aman karena _try_sources() menolak tab yang
+# kolom wajibnya tidak cocok. Kalau nanti gid-nya diisi, ia dipakai lebih dulu.
+REPORT_SHEET_MPP2 = "MPP2"                     # rencana headcount per posisi
+REPORT_SHEET_EMPLOYEE = "Existing Employee"    # karyawan aktif, sudah tersaring
+REPORT_SHEET_ADP = "ADP"                       # karyawan yang sedang acting
+REPORT_GID_MPP2 = ""                           # TODO: isi kalau gid diketahui
+REPORT_GID_EMPLOYEE = ""
+REPORT_GID_ADP = ""
+
+# Karyawan Future Talent Acceleration Program. Di daftar karyawan mereka tercatat
+# di divisi Human Capital Management sehingga HCM terlihat jauh lebih besar dari
+# kenyataannya; Position Name mereka selalu diawali "FTAP". Dipisah jadi divisi
+# sendiri, dan MPP-nya disamakan dengan Actual — program ini tidak punya rencana
+# headcount tersendiri, jadi Gap-nya selalu nol (arahan Navi, 8 Sep 2026).
+FTAP_DIVISION = "FTAP"
+FTAP_POSITION_PREFIX = "FTAP"
 REPORT_GID_MPP = REPORT_GIDS["Update MPP"]
 
 # Tab "Backend" di Monitoring 2026 — matriks SLA per level + kalender libur.
@@ -291,10 +319,10 @@ SHEET_URLS = {
 # Keterangan singkat tiap site, tampil di bawah judul kartu.
 FORM_NOTES = {
     "HO": "Form baru · Staff",
-    "BCP": "Form Centralized · Non Staff menyusul",
-    "KCP": "Form Centralized · Non Staff menyusul",
-    "ACP": "Form Centralized · Non Staff menyusul",
-    "SSCP": "Belum aktif",
+    "BCP": "Centralized form · Non Staff to follow",
+    "KCP": "Centralized form · Non Staff to follow",
+    "ACP": "Centralized form · Non Staff to follow",
+    "SSCP": "Not active yet",
 }
 
 # CATATAN — form Apps Script tidak akan tampil di dalam iframe sampai doGet()
@@ -538,7 +566,7 @@ MPP_HEADER_SWAPPED = True
 # Label untuk baris yang departemennya tidak bisa dipastikan dari master mana
 # pun. Sengaja satu baris gabungan — lebih jujur daripada membiarkan nama posisi
 # menyamar jadi departemen.
-DEPT_UNMAPPED_LABEL = "Belum diisi di sumber"
+DEPT_UNMAPPED_LABEL = "Not filled in at source"
 
 # Satu departemen, beberapa ejaan. Tanpa ini New Hire menampilkan dua baris HSE
 # yang sebenarnya departemen yang sama — ejaannya beda antar sheet:
@@ -598,7 +626,7 @@ RECRUITER_ROSTER = [
 
 # Inisial di luar roster digabung jadi satu baris dengan label ini (keputusan
 # Navi). Tanpa ini, 84% aktivitas di database hilang dari report.
-OTHER_RECRUITER_LABEL = "Recruiter lain"
+OTHER_RECRUITER_LABEL = "Other recruiters"
 
 # Kandidat yang kolom PIC Screening CV-nya KOSONG. Dulu baris seperti ini hilang
 # sama sekali dari tabel Performance — bukan masuk "Recruiter lain", tapi

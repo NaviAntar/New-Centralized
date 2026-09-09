@@ -94,8 +94,8 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
 
     if "candidate_id" not in df.columns:
         raise ValueError(
-            "Kolom 'candidate_id' tidak ada. Kemungkinan besar yang terambil "
-            "bukan tab fix_centralized — periksa gid/nama tab di config.py."
+            "Column 'candidate_id' is missing. Most likely the fetch returned a "
+            "tab other than fix_centralized — check the gid / tab name in config.py."
         )
 
     df = df[df["candidate_id"].notna() & (df["candidate_id"].astype(str).str.strip() != "")]
@@ -837,8 +837,8 @@ def headline(df: pd.DataFrame, lt: pd.DataFrame) -> dict:
 # ===========================================================================
 # Weekly Report
 # ===========================================================================
-BULAN_NAMA = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "Mei", 6: "Jun",
-              7: "Jul", 8: "Agu", 9: "Sep", 10: "Okt", 11: "Nov", 12: "Des"}
+BULAN_NAMA = {1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+              7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec"}
 
 
 BULAN_NAMA_BALIK = {v: k for k, v in BULAN_NAMA.items()}
@@ -889,7 +889,7 @@ def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
     tabel["Total"] = tabel.sum(axis=1)
     tabel = tabel[tabel["Total"] > 0].sort_values("Total", ascending=False)
     tabel.loc["TOTAL"] = tabel.sum()
-    return tabel.reset_index().rename(columns={"_dept": "Departemen", "index": "Departemen"})
+    return tabel.reset_index().rename(columns={"_dept": "Department", "index": "Department"})
 
 
 def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
@@ -1479,6 +1479,63 @@ def month_options(df: pd.DataFrame, sf: pd.DataFrame) -> list[str]:
     return [f"{BULAN_NAMA[p.month]} {p.year}" for p in sorted(per, reverse=True)]
 
 
+def screening_date(df: pd.DataFrame, sf: pd.DataFrame) -> pd.Series:
+    """cand_key -> tanggal Screening CV-nya (bukan bulannya).
+
+    Dipakai filter rentang tanggal, yang butuh tanggal utuh. Tanggal Screening
+    CV yang dipakai sebagai patokan, bukan tanggal onboarding: yang ditanya
+    "kandidat yang masuk pipeline dalam periode ini", dan itu ditandai kapan
+    CV-nya mulai diproses.
+    """
+    scr = sf[sf["stage"] == "Screening CV"][["cand_key", "screening_date"]]
+    scr = scr.dropna(subset=["screening_date"]).drop_duplicates("cand_key")
+    peta = dict(zip(scr["cand_key"], scr["screening_date"]))
+    return df["cand_key"].map(peta)
+
+
+def filter_date_range(df: pd.DataFrame, sf: pd.DataFrame,
+                      mulai=None, akhir=None) -> pd.DataFrame:
+    """Kandidat yang AKTIF dalam rentang [mulai, akhir].
+
+    Bukan "yang masuk dalam rentang ini". Kandidat punya rentang aktifnya
+    sendiri — dari tanggal tahap paling awal sampai tahap paling akhir, atau
+    sampai hari ini kalau prosesnya masih berjalan — dan dia ikut kalau rentang
+    itu BERSINGGUNGAN dengan rentang yang dipilih.
+
+    Bedanya penting. Kalau yang dipakai tanggal Screening CV saja, memilih
+    "bulan ini" akan membuang semua orang yang masuk bulan Juni dan sampai
+    sekarang masih di tahap MCU — padahal justru merekalah isi kolom "In
+    process" hari ini. Tabel yang menyatakan nol kandidat berjalan padahal
+    puluhan orang sedang diproses bukan filter, itu salah baca.
+
+    Kandidat yang tidak punya tanggal sama sekali tidak ikut saat rentangnya
+    diisi: tidak ada dasar untuk menyatakan dia aktif kapan.
+    """
+    if mulai is None and akhir is None:
+        return df
+    tanggal = pd.concat([sf[["cand_key", "start"]].rename(columns={"start": "d"}),
+                         sf[["cand_key", "end"]].rename(columns={"end": "d"})])
+    tanggal = tanggal.dropna(subset=["d"])
+    if tanggal.empty:
+        return df.iloc[0:0]
+    rentang = tanggal.groupby("cand_key")["d"].agg(["min", "max"])
+
+    # Proses yang masih berjalan dianggap aktif sampai hari ini, bukan sampai
+    # tanggal terakhir yang kebetulan terisi.
+    buka = set(df[df["status1"] == "OPEN"]["cand_key"])
+    hari_ini = pd.Timestamp.today().normalize()
+    rentang.loc[rentang.index.isin(buka), "max"] = hari_ini
+
+    awal = df["cand_key"].map(rentang["min"])
+    akhir_k = df["cand_key"].map(rentang["max"])
+    ada = awal.notna()
+    if akhir is not None:
+        ada &= awal <= pd.Timestamp(akhir).normalize()
+    if mulai is not None:
+        ada &= akhir_k >= pd.Timestamp(mulai).normalize()
+    return df[ada]
+
+
 def filter_month(df: pd.DataFrame, sf: pd.DataFrame, labels) -> pd.DataFrame:
     """Saring kandidat ke bulan-bulan yang dipilih. Kosong berarti semua."""
     if not labels:
@@ -1500,7 +1557,7 @@ def last_progress_breakdown(d: pd.DataFrame) -> list[tuple[str, int]]:
     jalan = d[d["status1"] == "OPEN"]
     if jalan.empty:
         return []
-    hitung = jalan["last_progress"].fillna("Belum mulai").value_counts().to_dict()
+    hitung = jalan["last_progress"].fillna("Not started").value_counts().to_dict()
     urut = {t: i for i, t in enumerate(STAGE_ORDER)}
     return sorted(hitung.items(), key=lambda kv: urut.get(kv[0], 99))
 
@@ -1627,30 +1684,36 @@ def estimate_onboarding(sf: pd.DataFrame, cand_key: str, rata: dict,
         if pic is not None:
             v = rata["per_pic"].get((pic, tahap))
             if v is not None and pd.notna(v):
-                return float(v), "rata-rata PIC"
+                return float(v), "recruiter average"
         v = rata["umum"].get(tahap)
         if v is not None and pd.notna(v):
-            return float(v), "rata-rata semua"
+            return float(v), "overall average"
         return None, None
 
     rincian = []
     sisa_ini = 0.0
 
-    # Tahap yang sedang berjalan: sudah mulai, belum selesai. Sisanya = budget
-    # dikurangi hari yang sudah terpakai, minimal nol — kalau sudah lewat budget,
-    # yang tersisa bukan angka negatif, tapi "tinggal diselesaikan".
+    # Tahap yang sedang berjalan: sudah mulai, belum selesai. Sisanya diukur
+    # terhadap RATA-RATA LAMA TAHAP ITU DIKERJAKAN, bukan terhadap budget SLA
+    # (arahan Navi, 8 Sep 2026). Alasannya: budget adalah janji, rata-rata adalah
+    # kenyataan. Tahap yang budgetnya 5 hari tapi kenyataannya selalu 12 hari
+    # akan terus menghasilkan perkiraan yang meleset kalau yang dipakai budget.
+    # Kalau rata-ratanya sudah terlampaui, sisanya nol — "tinggal diselesaikan".
     jalan = baris[baris["start"].notna() & baris["end"].isna()]
     for r in jalan.itertuples():
         terpakai = working_days(pd.Series([r.start]),
                                 pd.Series([pd.Timestamp.today().normalize()])).iloc[0]
-        budget = float(r.budget) if pd.notna(r.budget) else None
-        if budget is None:
+        acuan, dasar = rata_tahap(r.stage)
+        if acuan is None:
+            acuan = float(r.budget) if pd.notna(r.budget) else None
+            dasar = "SLA budget (no history yet)"
+        if acuan is None:
             continue
-        sisa = max(budget - float(terpakai or 0), 0.0)
+        sisa = max(acuan - float(terpakai or 0), 0.0)
         sisa_ini += sisa
         rincian.append({"tahap": r.stage, "hari": round(sisa, 1),
-                        "dasar": f"sisa budget ({int(budget)} hari, "
-                                 f"terpakai {int(terpakai or 0)})"})
+                        "dasar": f"{dasar} {acuan:.1f} days, "
+                                 f"{int(terpakai or 0)} used"})
 
     # Tahap yang belum mulai DAN memang masih di depan. Tahap yang nomornya lebih
     # kecil dari tahap terjauh yang sudah dijalani bukan sisa pekerjaan — itu
@@ -1665,7 +1728,7 @@ def estimate_onboarding(sf: pd.DataFrame, cand_key: str, rata: dict,
         v, dasar = rata_tahap(r.stage)
         if v is None:
             v = float(r.budget) if pd.notna(r.budget) else None
-            dasar = "budget (belum ada riwayat)"
+            dasar = "SLA budget (no history yet)"
         if v is None:
             continue
         berikut += v
@@ -1692,11 +1755,25 @@ def estimate_all(sf: pd.DataFrame, df: pd.DataFrame,
         return pd.Series(dtype=float)
 
     hari_ini = pd.Timestamp.today().normalize()
-    jalan = d[d["start"].notna() & d["end"].isna() & d["budget"].notna()].copy()
+    jalan = d[d["start"].notna() & d["end"].isna()].copy()
     if len(jalan):
         terpakai = working_days(jalan["start"],
                                 pd.Series([hari_ini] * len(jalan), index=jalan.index))
-        jalan["_sisa"] = (jalan["budget"].astype(float) - terpakai.astype(float)).clip(lower=0)
+        # Acuan tahap berjalan = rata-rata lama tahap itu dikerjakan (per PIC
+        # kalau ada riwayatnya), bukan budget SLA-nya. Lihat alasannya di
+        # estimate_onboarding(). Budget hanya menambal tahap yang belum pernah
+        # ada riwayatnya sama sekali.
+        if by_name is not None:
+            jalan["_pic"] = jalan["cand_key"].map(by_name)
+            acuan = pd.Series([
+                rata["per_pic"].get((p, st), rata["umum"].get(st))
+                for p, st in zip(jalan["_pic"], jalan["stage"])
+            ], index=jalan.index, dtype="float64")
+        else:
+            acuan = jalan["stage"].map(rata["umum"]).astype("float64")
+        acuan = acuan.fillna(jalan["budget"])
+        jalan["_sisa"] = (acuan - terpakai.astype(float)).clip(lower=0)
+        jalan = jalan[jalan["_sisa"].notna()]
         sisa_ini = jalan.groupby("cand_key")["_sisa"].sum()
     else:
         sisa_ini = pd.Series(dtype=float)
@@ -1757,29 +1834,72 @@ def prepare_reforecast(df: pd.DataFrame) -> pd.DataFrame:
     return out[out["divisi"].notna() & ~out["divisi"].isin(["nan", ""])]
 
 
-def prepare_headcount(emp: pd.DataFrame, kode_divisi: dict) -> pd.DataFrame:
-    """Karyawan AKTIF jadi (site, divisi, level, status) — satu baris satu orang.
+def prepare_headcount(emp: pd.DataFrame, kode_divisi: dict | None = None) -> pd.DataFrame:
+    """Karyawan AKTIF jadi (site, divisi, level_code, status) — 1 baris 1 orang.
 
-    Aktif = kolom End Date kosong. Yang sudah punya tanggal berhenti tidak
-    dihitung sebagai isi organisasi hari ini.
+    Sejak 8 Sep 2026 sumbernya tab **Existing Employee**, yang sudah punya kolom
+    Division, Loc, dan Level yang dibereskan tim — divisi tidak perlu ditebak
+    lagi dari huruf pertama Position Code. `kode_divisi` hanya dipakai kalau
+    kolom Division tidak ada, supaya sumber lama tetap bisa dibaca.
+
+    Dua aturan dari sheet "Copy of Summary by Division":
+      - Staff = Level < 11, Non Staff = Level 11 (Level kosong dibuang).
+      - Karyawan **FTAP** dipindah keluar dari Human Capital Management jadi
+        divisi sendiri. Position Name mereka selalu diawali "FTAP"; selama
+        mereka ikut terhitung di HCM, HCM terlihat jauh lebih besar dari
+        kenyataannya.
     """
     d = emp.copy()
     d.columns = [str(c).strip() for c in d.columns]
+
+    # Baris dengan End Date terisi berarti sudah berhenti. Tab Existing Employee
+    # sudah tersaring, tapi pengecekan ini tetap ada supaya sumber lama aman.
     akhir = d.get("End Date")
     if akhir is not None:
         kosong = akhir.isna() | akhir.astype(str).str.strip().isin(["", "nan", "NaT"])
         d = d[kosong]
 
+    if "Division" in d.columns:
+        divisi = d["Division"].astype(str).str.strip()
+    else:
+        divisi = (d["Position Code"].astype(str).str.strip().str[0]
+                  .map(kode_divisi or {}))
+
+    if "Loc" in d.columns:
+        site = d["Loc"].astype(str).str.strip().str.upper()
+    else:
+        site = d["Location Name"].map(C.LOCATION_TO_SITE)
+
     lvl = pd.to_numeric(d.get("Level"), errors="coerce")
+    posisi = d.get("Position Name")
+    ftap = (posisi.astype(str).str.strip().str.upper()
+            .str.startswith(C.FTAP_POSITION_PREFIX)
+            if posisi is not None else pd.Series(False, index=d.index))
+
     out = pd.DataFrame({
-        "site": d["Location Name"].map(C.LOCATION_TO_SITE),
-        "divisi": (d["Position Code"].astype(str).str.strip().str[0]
-                     .map(kode_divisi)),
+        "site": site,
+        "divisi": divisi.where(~ftap, C.FTAP_DIVISION),
         "level_code": lvl,
         "status": lvl.map(lambda v: "Non Staff" if pd.notna(v) and v >= 11
                           else "Staff" if pd.notna(v) else None),
+        "ftap": ftap,
     })
-    return out[out["site"].notna() & out["divisi"].notna()]
+    out = out[out["site"].notna() & out["divisi"].notna()]
+    return out[~out["divisi"].isin(["", "nan", "None", "#N/A"])]
+
+
+def prepare_adp(adp: pd.DataFrame) -> pd.DataFrame:
+    """Tabel ADP siap hitung: (site, divisi, status).
+
+    data_loader.load_adp() sudah merapikannya; fungsi ini hanya membakukan
+    huruf besar site supaya cocok dengan headcount dan MPP.
+    """
+    if adp is None or adp.empty:
+        return pd.DataFrame(columns=["site", "divisi", "status"])
+    d = adp.copy()
+    d["site"] = d["site"].astype(str).str.strip().str.upper()
+    d["divisi"] = d["divisi"].astype(str).str.strip()
+    return d
 
 
 def _pipeline_per_grup(df: pd.DataFrame, kunci: list[str]) -> pd.DataFrame:
@@ -1893,12 +2013,67 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame,
     return out.reset_index().rename(columns={"index": "_grup"})
 
 
+def _mpp_dengan_ftap(mpp: pd.Series, aktual: pd.Series) -> pd.Series:
+    """MPP divisi FTAP disamakan dengan Actual-nya.
+
+    Future Talent Acceleration Program tidak punya rencana headcount tersendiri
+    di MPP2 — orangnya direkrut sebagai program, bukan untuk mengisi posisi yang
+    sudah dianggarkan. Kalau MPP-nya dibiarkan nol, Gap FTAP tampil sebagai
+    kelebihan orang yang besar dan menutupi kekurangan divisi lain. Disamakan
+    dengan Actual, Gap-nya nol dan divisi ini terbaca apa adanya: sekian orang,
+    memang segitu rencananya (arahan Navi, 8 Sep 2026).
+    """
+    out = mpp.copy()
+    if C.FTAP_DIVISION in aktual.index:
+        out.loc[C.FTAP_DIVISION] = aktual.get(C.FTAP_DIVISION, 0)
+    return out
+
+
+# Sebutan level di sheet ADP tidak sama persis dengan nama level portal.
+ADP_LEVEL_ALIAS = {
+    "junior staff": "Jr. Staff / Foreman", "jr staff": "Jr. Staff / Foreman",
+    "jr. staff": "Jr. Staff / Foreman", "foreman": "Jr. Staff / Foreman",
+    "supervisor": "Supervisor", "superintendent": "Superintendent",
+    "manager": "Manager", "general manager": "General Manager",
+    "non-staff": "Non Staff", "non staff": "Non Staff", "mekanik": "Non Staff",
+    "operator": "Non Staff",
+}
+
+
+def adp_level_name(v) -> str | None:
+    """Sebutan level di sheet ADP -> nama level yang dipakai portal."""
+    t = str(v or "").strip().lower()
+    return ADP_LEVEL_ALIAS.get(t)
+
+
+def _hitung_adp(adp: pd.DataFrame, kunci: str, site: str | None = None,
+                divisi: str | None = None) -> pd.Series:
+    """Jumlah orang ADP per grup. Kosong kalau tabel ADP tidak tersedia."""
+    if adp is None or adp.empty:
+        return pd.Series(dtype=int)
+    a = adp
+    if site:
+        a = a[a["site"] == site]
+    if divisi is not None:
+        a = a[a["divisi"] == divisi]
+    if a.empty:
+        return pd.Series(dtype=int)
+    return a.groupby(kunci).size()
+
+
 def division_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
-                     site: str | None = None, level_codes=None) -> pd.DataFrame:
-    """Satu baris per divisi: MPP, Actual, Gap, plus keadaan pipeline-nya.
+                     site: str | None = None, level_codes=None,
+                     adp: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Satu baris per divisi: MPP, Actual, Gap, ADP, Need to hire, plus pipeline.
 
     `site` None berarti All. `level_codes` menyaring ke level tertentu, dipakai
     saat drill-down sudah masuk ke satu level.
+
+    **Need to hire** = MPP − Actual − ADP, dibatasi minimal nol. Sheet aslinya
+    menulis angka ini bertanda terbalik (ADP + Gap, negatif berarti kurang);
+    di sini tandanya dibalik supaya kolom bernama "Need to hire" berisi angka
+    yang benar-benar berarti "rekrut sekian orang lagi". ADP ikut mengurangi
+    karena orang itu sudah menempati posisinya sebagai acting.
     """
     r, h = ref.copy(), hc.copy()
     if site:
@@ -1910,11 +2085,15 @@ def division_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
 
     mpp = r.groupby("divisi")["mpp"].sum()
     aktual = h.groupby("divisi").size()
+    mpp = _mpp_dengan_ftap(mpp, aktual)
     pipe = _pipeline_per_grup(cand, ["divisi"]).set_index("divisi") if len(cand) else None
 
     out = pd.DataFrame({"mpp": mpp}).join(aktual.rename("actual"), how="outer")
     out[["mpp", "actual"]] = out[["mpp", "actual"]].fillna(0).astype(int)
     out["gap"] = out["actual"] - out["mpp"]
+    out["adp"] = (_hitung_adp(adp, "divisi", site)
+                  .reindex(out.index).fillna(0).astype(int))
+    out["need"] = (out["mpp"] - out["actual"] - out["adp"]).clip(lower=0)
     for k in ("kandidat", "ongoing", "hired", "pool", "gagal"):
         out[k] = (pipe[k] if pipe is not None and k in pipe else 0)
         out[k] = out[k].reindex(out.index).fillna(0).astype(int)
@@ -1924,7 +2103,8 @@ def division_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
 
 
 def level_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
-                  divisi: str, site: str | None = None) -> pd.DataFrame:
+                  divisi: str, site: str | None = None,
+                  adp: pd.DataFrame | None = None) -> pd.DataFrame:
     """Sebaran satu divisi per LEVEL, urut dari level paling bawah ke atas."""
     r = ref[ref["divisi"] == divisi]
     h = hc[hc["divisi"] == divisi]
@@ -1943,6 +2123,10 @@ def level_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
     h = h.copy()
     h["_k"] = h["level_code"].map(C.level_name)
     aktual = h.groupby("_k").size()
+    # Divisi FTAP: MPP tiap levelnya mengikuti Actual, sama seperti di tingkat
+    # divisi — kalau tidak, satu-satunya level FTAP akan tampil kelebihan orang.
+    if divisi == C.FTAP_DIVISION:
+        mpp = aktual.astype(float).copy()
 
     pipe = None
     if len(c):
@@ -1953,6 +2137,23 @@ def level_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
     out = pd.DataFrame({"mpp": mpp}).join(aktual.rename("actual"), how="outer")
     out[["mpp", "actual"]] = out[["mpp", "actual"]].fillna(0).astype(int)
     out["gap"] = out["actual"] - out["mpp"]
+
+    # ADP ditempatkan di level yang benar-benar sedang dia duduki (kolom "Level
+    # Acting" di sheet ADP), bukan level asalnya — yang berkurang kebutuhannya
+    # adalah posisi yang sedang dia isi.
+    out["adp"] = 0
+    if adp is not None and not adp.empty and "level" in adp.columns:
+        a = adp[adp["divisi"] == divisi]
+        if site:
+            a = a[a["site"] == site]
+        if len(a):
+            per = a.assign(_k=a["level"].map(adp_level_name)).dropna(subset=["_k"])
+            hit = per.groupby("_k").size()
+            for nama in out.index:
+                out.loc[nama, "adp"] = int(hit.get(nama, 0))
+    out["adp"] = out["adp"].fillna(0).astype(int)
+    out["need"] = (out["mpp"] - out["actual"] - out["adp"]).clip(lower=0)
+
     for k in ("kandidat", "ongoing", "hired", "pool", "gagal"):
         out[k] = (pipe[k] if pipe is not None and k in pipe else 0)
         out[k] = out[k].reindex(out.index).fillna(0).astype(int)

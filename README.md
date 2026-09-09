@@ -669,23 +669,52 @@ Tingkat ketiga (**posisi & orangnya**) ada di bawah tabel, dipilih lewat dua
 dropdown: Divisi lalu Level. Isinya daftar nama, dan daftar nama di dalam kolom
 angka tidak terbaca — jadi sengaja tidak dijadikan baris tabel.
 
-**Tiga sumber, tiga peran yang berbeda:**
+**Empat sumber, empat peran yang berbeda** — semuanya tab di spreadsheet
+Report yang sama, persis yang dipakai rumus di sheet *Copy of Summary by
+Division* milik tim (diselaraskan 8 Sep 2026):
 
-| Sumber | Perannya |
-|---|---|
-| MPP Reforecast (`MPP_SPREADSHEET_ID`) | berapa yang **direncanakan** |
-| Update Employee List | berapa yang **ada** sekarang (End Date kosong = aktif) |
-| Database kandidat | berapa yang **sedang diproses** |
+| Tab | Perannya | Rumus aslinya |
+|---|---|---|
+| `MPP2` | berapa yang **direncanakan** | `SUMIFS(MPP2!Reforecast; Divisi; Loc; Status)` |
+| `Existing Employee` | berapa yang **ada** sekarang | `COUNTIFS(Division; Level "<11"/"=11"; Loc)` |
+| `ADP` | berapa yang sudah **diisi acting** | `COUNTIFS(ADP!Division; Lokasi; Status)` |
+| Database kandidat | berapa yang **sedang diproses** | — |
 
-Divisi seorang karyawan diambil dari **huruf pertama Position Code**, dipetakan
-lewat sheet `Code Divisi` — aturan yang sama dengan yang dipakai sheet aslinya.
-Sudah dicocokkan terhadap blok BCP: seluruh divisi sama persis kecuali dua yang
-selisih satu orang karena snapshot sheet-nya beda hari. Total MPP juga cocok
-persis (BCP 2.886, JKT 257).
+Sebelumnya MPP diambil dari spreadsheet lain dan divisi karyawan ditebak dari
+huruf pertama Position Code. Dua sumber berbeda untuk satu angka yang sama
+adalah cara paling pasti membuat portal dan sheet berselisih, jadi sekarang
+keduanya membaca tab yang sama. Tab `Existing Employee` juga sudah punya kolom
+**Division**, **Loc**, dan **Level** yang dibereskan tim — tidak ada lagi
+tebakan dari kode posisi, dan isinya sudah tersaring (tidak ada End Date).
 
-Satu perbedaan yang disengaja: blok JKT di sheet aslinya hanya berisi baris
-Staff, sedangkan halaman ini menghitung Staff dan Non Staff di semua site —
-karena itu Actual JKT di sini lebih besar.
+**ADP** = orang yang sudah menempati posisi itu sebagai *acting*. Kolomnya
+ditempatkan di level yang sedang dia duduki (kolom `Level Acting`), bukan level
+asalnya — yang berkurang kebutuhannya adalah posisi yang sedang dia isi.
+
+**Need to hire** = MPP − Actual − ADP, minimal nol. Sheet aslinya menulis angka
+ini bertanda terbalik (`ADP + Gap`, negatif berarti kurang); di portal tandanya
+dibalik supaya kolom bernama "Need to hire" berisi angka yang benar-benar
+berarti "rekrut sekian orang lagi".
+
+**FTAP jadi divisi sendiri.** Karyawan Future Talent Acceleration Program
+tercatat di divisi Human Capital Management di daftar karyawan — 89 orang, yang
+membuat HCM terlihat jauh lebih besar dari kenyataannya. Position Name mereka
+selalu diawali `FTAP`, jadi mereka dipindah ke divisi `FTAP` tersendiri, dan
+**MPP FTAP disamakan dengan Actual**: program ini tidak punya rencana headcount
+sendiri di MPP2, dan kalau MPP-nya dibiarkan nol, Gap FTAP tampil sebagai
+kelebihan orang yang besar dan menutupi kekurangan divisi lain. Hasilnya HCM
+turun dari 232 jadi 143 orang.
+
+**Filter rentang tanggal.** Dua kotak tanggal, default **tanggal 1 bulan
+berjalan sampai hari ini**. Yang disaring hanya kolom kandidat — MPP, Actual,
+dan ADP adalah potret hari ini, bukan kejadian dalam rentang waktu.
+
+Kandidat ikut kalau **rentang aktifnya bersinggungan** dengan rentang yang
+dipilih: dari tanggal tahap paling awal sampai tahap paling akhir, atau sampai
+hari ini kalau prosesnya masih berjalan. Bukan "yang masuk dalam rentang ini" —
+kalau yang dipakai tanggal Screening CV saja, memilih "bulan ini" akan membuang
+semua orang yang masuk bulan Juni dan sampai sekarang masih di tahap MCU,
+padahal justru merekalah isi kolom *In process* hari ini.
 
 **Level** ditulis sebagai angka di sheet dan diterjemahkan lewat
 `config.LEVEL_CODE_NAMES`: 11 Non Staff · 10 Jr. Staff/Foreman · 9 Supervisor ·
@@ -715,10 +744,17 @@ serta di tabel detail Summary by Division. Kolom itu dipisah dari "SLA / target"
 supaya keduanya bisa dibaca berdampingan; yang sudah CLOSE atau FAILED ditulis
 "selesai", karena perkiraan untuk proses yang sudah berhenti bukan informasi.
 
-Cara hitung sisa harinya:
+Cara hitung sisa harinya — seluruhnya berdasarkan **rata-rata SLA yang
+benar-benar terjadi**, bukan budget (arahan Navi, 8 Sep 2026):
 
-1. sisa budget tahap yang sedang berjalan (budget − hari terpakai, minimal nol);
+1. sisa tahap yang sedang berjalan = rata-rata lama tahap itu dikerjakan −
+   hari yang sudah terpakai, minimal nol;
 2. ditambah rata-rata tiap tahap yang **belum dijalani**.
+
+Budget hanya menambal tahap yang belum pernah ada riwayatnya sama sekali.
+Alasannya: budget adalah janji, rata-rata adalah kenyataan. Tahap yang
+budgetnya 5 hari tapi kenyataannya selalu 12 hari akan terus menghasilkan
+perkiraan yang meleset kalau yang dipakai budget.
 
 Rata-ratanya dihitung **per tahap dulu baru dijumlahkan** — bukan semua durasi
 dikumpulkan lalu dirata-rata sekali, karena tahap yang datanya banyak akan
@@ -734,6 +770,35 @@ kepanjangan.
 Di tabel, kolom **SLA / target** selalu terisi: angka kiri hari kerja yang sudah
 terpakai (dijumlahkan dari tiap tahap, jadi yang OPEN dan FAILED pun punya
 angka), angka kanan abu adalah budget SLA level itu.
+
+## Bahasa antarmuka
+
+Seluruh teks yang dilihat pengguna berbahasa **Inggris** sejak 8 Sep 2026 —
+nav, judul section, label kartu, header kolom, filter, catatan penjelas, dan
+halaman login. Komentar kode dan docstring tetap bahasa Indonesia: itu catatan
+kerja untuk yang merawat portalnya, bukan antarmuka.
+
+Yang TIDAK diterjemahkan dan memang tidak boleh: kunci `session_state`, nama
+kolom data (`kandidat`, `ongoing`, `hired`, `pool`, `gagal`), dan nilai yang
+datang dari sheet (`TALENT POOL`, nama level, nama departemen). Mengubahnya
+memutus data, bukan memperjelas bahasa.
+
+## Tracking Posisi — By Department
+
+Bentuknya disamakan dengan Summary by Division (arahan Navi, 8 Sep 2026): satu
+tabel, baris posisi di tingkat atas, klik `[+]` dan **kandidatnya muncul tepat
+di bawahnya** dalam kolom yang sama.
+
+Sebelumnya tiap posisi adalah satu expander Streamlit. Plant & Maintenance
+punya 79 posisi, dan 79 kotak yang harus dibuka satu-satu bukan tracking, cuma
+daftar panjang. Dalam satu tabel, posisi bisa dibandingkan menurun dan
+kandidatnya tetap sejangkauan satu klik — tanpa rerun, karena buka-tutupnya
+murni CSS.
+
+Kolom hitung (Candidates, In process, Onboarded, Backup, Failed) milik baris
+**posisi**; SLA / target, Estimate Onboarding, dan Status milik baris
+**kandidat** di bawahnya. Kolom yang tidak berlaku dibiarkan kosong, bukan
+diisi tanda hubung yang menambah kebisingan.
 
 ## Average to hire
 

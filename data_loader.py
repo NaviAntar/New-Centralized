@@ -317,6 +317,98 @@ def load_mpp_reforecast(source: str | pd.DataFrame | None = None) -> pd.DataFram
     return df
 
 
+def load_mpp2(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
+    """Tab "MPP2" di spreadsheet Report — rencana headcount per posisi.
+
+    Menggantikan tab "MPP Reforecast" di spreadsheet lain: sejak 8 Sep 2026
+    inilah yang dipakai sheet "Copy of Summary by Division" milik tim, jadi
+    portal memakai sumber yang sama persis supaya angkanya tidak pernah
+    berbeda. Bentuk kolomnya sama, sehingga metrics.prepare_reforecast() tidak
+    perlu diubah.
+    """
+    if isinstance(source, pd.DataFrame):
+        return source.copy()
+    kandidat = [("argumen langsung", source or ""),
+                ("env MPP2_CSV", os.environ.get("MPP2_CSV", ""))]
+    if C.REPORT_GID_MPP2:
+        kandidat.append(("export by gid", C.gsheet_gid_url(
+            C.REPORT_GID_MPP2, C.REPORT_SPREADSHEET_ID)))
+    kandidat.append(("gviz by nama tab", C.gsheet_csv_url(
+        C.REPORT_SHEET_MPP2, C.REPORT_SPREADSHEET_ID)))
+    df, _ = _try_sources(
+        kandidat, require=["Loc", "Level Code", "Status", "Divisi", "Reforecast"])
+    return df
+
+
+def load_existing_employee(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
+    """Tab "Existing Employee" — karyawan aktif, satu baris satu orang.
+
+    Kelebihannya dibanding "Update MPP" yang dipakai sebelumnya: tab ini sudah
+    punya kolom **Division**, **Loc**, dan **Level** yang sudah dibereskan, jadi
+    divisi tidak perlu ditebak lagi dari huruf pertama Position Code. Isinya juga
+    sudah tersaring — tidak ada baris dengan End Date terisi.
+    """
+    if isinstance(source, pd.DataFrame):
+        return source.copy()
+    kandidat = [("argumen langsung", source or ""),
+                ("env EMPLOYEE_CSV", os.environ.get("EMPLOYEE_CSV", ""))]
+    if C.REPORT_GID_EMPLOYEE:
+        kandidat.append(("export by gid", C.gsheet_gid_url(
+            C.REPORT_GID_EMPLOYEE, C.REPORT_SPREADSHEET_ID)))
+    kandidat.append(("gviz by nama tab", C.gsheet_csv_url(
+        C.REPORT_SHEET_EMPLOYEE, C.REPORT_SPREADSHEET_ID)))
+    df, _ = _try_sources(
+        kandidat, require=["Employee ID", "Position Name", "Division", "Loc", "Level"])
+    return df
+
+
+def load_adp(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
+    """Tab "ADP" — karyawan yang sedang acting ke posisi di atasnya.
+
+    Dipakai kolom ADP di Summary by Division: orang yang sudah menempati posisi
+    itu sebagai acting mengurangi kebutuhan rekrut dari luar. Dua kolom kunci
+    (divisi dan Staff/Non Staff) TIDAK punya judul di sheet, jadi di sini diberi
+    nama sendiri berdasarkan posisinya: tepat setelah "Progress Status" dan
+    tepat setelah "Existing Posid".
+    """
+    if isinstance(source, pd.DataFrame):
+        df = source.copy()
+    else:
+        kandidat = [("argumen langsung", source or ""),
+                    ("env ADP_CSV", os.environ.get("ADP_CSV", ""))]
+        if C.REPORT_GID_ADP:
+            kandidat.append(("export by gid", C.gsheet_gid_url(
+                C.REPORT_GID_ADP, C.REPORT_SPREADSHEET_ID)))
+        kandidat.append(("gviz by nama tab", C.gsheet_csv_url(
+            C.REPORT_SHEET_ADP, C.REPORT_SPREADSHEET_ID)))
+        df, _ = _try_sources(kandidat, require=["Kategori", "Lokasi", "Existing Posid"])
+
+    kol = [str(c).strip() for c in df.columns]
+    df.columns = kol
+
+    def setelah(nama):
+        """Judul kolom tepat setelah `nama` — kolom tanpa judul di sheet."""
+        if nama in kol:
+            i = kol.index(nama) + 1
+            if i < len(kol):
+                return kol[i]
+        return None
+
+    d_div = setelah("Progress Status (Updated)") or setelah("Progress Status")
+    d_stat = setelah("Existing Posid")
+    out = pd.DataFrame({
+        "divisi": (df[d_div].astype(str).str.strip() if d_div else ""),
+        "site": df["Lokasi"].astype(str).str.strip().str.upper(),
+        "status": (df[d_stat].astype(str).str.strip() if d_stat else ""),
+        # Level yang sedang dia duduki sebagai acting — itu level posisi yang
+        # kebutuhannya berkurang, bukan level asalnya. Dipakai menempatkan angka
+        # ADP di baris level yang benar saat divisi dibuka.
+        "level": (df["Level Acting"].astype(str).str.strip()
+                  if "Level Acting" in kol else ""),
+    })
+    return out[out["divisi"].notna() & ~out["divisi"].isin(["", "nan", "None"])]
+
+
 def load_division_code(source: str | pd.DataFrame | None = None) -> dict[str, str]:
     """Huruf kode divisi -> nama divisi, dari sheet "Code Divisi".
 

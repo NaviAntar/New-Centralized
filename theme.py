@@ -1659,7 +1659,7 @@ def progress_bar(done: int, total: int, label: str = "Recruitment Progress",
     return (
         f'<div class="dh-prog">'
         f'<div class="top"><span class="lab">{html.escape(label)}</span>'
-        f'<span class="cnt">{done} dari {total} tahap selesai</span></div>'
+        f'<span class="cnt">{done} of {total} stages done</span></div>'
         f'<div class="track"><div class="fill" style="width:{pct:.0f}%;background:{color}"></div></div>'
         f'<div class="pct" style="color:{color}">{pct:.0f}%</div>'
         f"</div>"
@@ -1689,13 +1689,13 @@ def stage_table(stages: list[dict]) -> str:
     status: done / active / idle / failed / na
     """
     icon_map = {"done": "✓", "failed": "✕", "na": "–"}
-    badge_map = {"done": "Done", "failed": "Failed di sini", "active": "Berjalan",
-                 "idle": "Belum mulai", "na": "Tidak berlaku"}
+    badge_map = {"done": "Done", "failed": "Failed here", "active": "Running",
+                 "idle": "Not started", "na": "N/A"}
     color_map = {"done": STATUS["good"], "failed": STATUS["bad"],
                  "active": BRAND["orange"], "idle": NEUTRAL["text_soft"],
                  "na": NEUTRAL["text_soft"]}
 
-    cols = ("", "Tahap", "Status", "Mulai → Selesai", "LT / Budget", "SLA")
+    cols = ("", "Stage", "Status", "Start → End", "LT / Budget", "SLA")
     head = "".join(
         f'<th class="dh-num">{h}</th>' if h == "LT / Budget" else f"<th>{h}</th>"
         for h in cols
@@ -1981,8 +1981,8 @@ def data_table(headers: list[str], rows: list[list], align: str | None = None,
         # tabel (nama posisi panjang membungkus jadi dua baris), jadi jumlah yang
         # benar-benar terlihat tidak selalu sama dengan max_rows — menyebutkannya
         # justru jadi angka yang salah.
-        kaki = (f'<div class="dh-tablefoot">{len(rows)} baris — '
-                "gulir di dalam tabel untuk melihat sisanya</div>")
+        kaki = (f'<div class="dh-tablefoot">{len(rows)} rows — '
+                "scroll inside the table to see the rest</div>")
 
     return (f'<div class="dh-tablewrap"{gaya}><table class="dh-table dh-portal">'
             f"<thead><tr>{thead}</tr></thead><tbody>{''.join(body)}{tot}</tbody>"
@@ -2001,7 +2001,7 @@ def split_bar(segmen: list[tuple[str, int, str]], total: int | None = None) -> s
     """
     total = total if total is not None else sum(v for _l, v, _c in segmen)
     if not total:
-        return '<div class="dh-splitbar-empty">Belum ada kandidat</div>'
+        return '<div class="dh-splitbar-empty">No candidates yet</div>'
 
     potong = "".join(
         f'<span style="width:{v / total * 100:.4f}%;background:{c}" title="{html.escape(l)}: {v}"></span>'
@@ -2025,7 +2025,7 @@ def chip_row(items: list[tuple[str, int]], warna: str | None = None) -> str:
     """
     warna = warna or BRAND["orange"]
     if not items:
-        return '<div class="dh-secnote">Tidak ada tahap berjalan</div>'
+        return '<div class="dh-secnote">No stage running</div>'
     isi = "".join(
         f'<span class="dh-chip"><b>{v}</b> {html.escape(str(l))}</span>'
         for l, v in items if v
@@ -2244,8 +2244,8 @@ def group_table(key: str, kolom: list[dict], baris: list[dict],
     kepala_hint = ""
     if petunjuk:
         kepala_hint = (f'<div class="dh-gthint"><span>{petunjuk}</span>'
-                       '<span class="aksi">⇄ tabel bisa digeser ke kanan — '
-                       'kolom divisi tetap di tempat</span></div>')
+                       '<span class="aksi">⇄ scroll right for more columns — '
+                       'the first column stays put</span></div>')
 
     return (f"<style>{aturan}</style>{kepala_hint}"
             f'<div class="dh-gtbox">{"".join(kotak)}'

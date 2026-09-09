@@ -48,7 +48,7 @@ def num(x, dec: int = 0) -> str:
     return s.replace(",", " ").replace(".", ",").replace(" ", ".")
 
 
-def _empty(height: int, msg: str = "Belum ada data") -> go.Figure:
+def _empty(height: int, msg: str = "No data yet") -> go.Figure:
     fig = go.Figure()
     fig.add_annotation(text=msg, showarrow=False,
                        font=dict(color=NEUTRAL["text_soft"], size=12))
@@ -64,9 +64,9 @@ def funnel_bars(funnel_df, height: int = 330) -> go.Figure:
     d = funnel_df.iloc[::-1]  # Plotly menggambar dari bawah
     colors = [STAGE_SHADES.get(s, BRAND["orange"]) for s in d["stage"]]
     hover = [
-        f"<b>{r.stage}</b><br>{num(r.n)} kandidat"
-        + (f"<br>{num(r.conv_pct, 1)}% dari tahap sebelumnya" if r.conv_pct == r.conv_pct else "")
-        + (f"<br>{num(r.of_base_pct, 1)}% dari screening" if r.of_base_pct == r.of_base_pct else "")
+        f"<b>{r.stage}</b><br>{num(r.n)} candidates"
+        + (f"<br>{num(r.conv_pct, 1)}% of the previous stage" if r.conv_pct == r.conv_pct else "")
+        + (f"<br>{num(r.of_base_pct, 1)}% of screening" if r.of_base_pct == r.of_base_pct else "")
         for r in d.itertuples()
     ]
     fig = go.Figure(go.Bar(
@@ -96,7 +96,7 @@ def trend_line(trend_df, height: int = 280, budget: float | None = None) -> go.F
     fig = go.Figure()
     if budget:
         fig.add_hline(y=budget, line=dict(color=NEUTRAL["text_soft"], width=1, dash="dot"),
-                      annotation_text=f"budget {num(budget)} hari",
+                      annotation_text=f"budget {num(budget)} days",
                       annotation_font=dict(size=10, color=NEUTRAL["text_soft"]),
                       annotation_position="top left")
     fig.add_trace(go.Scatter(
@@ -104,7 +104,7 @@ def trend_line(trend_df, height: int = 280, budget: float | None = None) -> go.F
         line=dict(color=BRAND["orange"], width=2.5, shape="spline", smoothing=0.5),
         marker=dict(size=7, color=BRAND["orange"], line=dict(width=2, color="#FFFFFF")),
         fill="tozeroy", fillcolor="rgba(255,104,5,0.09)",
-        hovertext=[f"<b>{p}</b><br>median {num(m)} hari kerja<br>{num(n)} hire"
+        hovertext=[f"<b>{p}</b><br>median {num(m)} working days<br>{num(n)} hires"
                    for p, m, n in zip(x, trend_df["median_lt"], trend_df["n"])],
         hovertemplate="%{hovertext}<extra></extra>",
     ))
@@ -112,7 +112,7 @@ def trend_line(trend_df, height: int = 280, budget: float | None = None) -> go.F
         height,
         xaxis=dict(showgrid=False, tickfont=dict(size=10.5)),
         yaxis=dict(showgrid=True, gridcolor=NEUTRAL["border_soft"], zeroline=False,
-                   tickfont=dict(size=10.5), title=dict(text="hari kerja", font=dict(size=10))),
+                   tickfont=dict(size=10.5), title=dict(text="working days", font=dict(size=10))),
     ))
     return fig
 
@@ -136,7 +136,7 @@ def status_donut(counts: dict, height: int = 240) -> go.Figure:
                    for l, v in zip(labels, values)],
         hovertemplate="%{hovertext}<extra></extra>",
     ))
-    fig.add_annotation(text=f"<b>{num(total)}</b><br><span style='font-size:10px'>kandidat</span>",
+    fig.add_annotation(text=f"<b>{num(total)}</b><br><span style='font-size:10px'>candidates</span>",
                        showarrow=False, font=dict(size=19, color=NEUTRAL["text"]))
     fig.update_layout(**_layout(height))
     return fig
@@ -155,7 +155,7 @@ def source_bars(src_df, height: int = 240) -> go.Figure:
         marker=dict(color=colors, line=dict(width=0)),
         text=[f"{num(r, 1)}%" for r in d["rate"]],
         textposition="outside", textfont=dict(size=11),
-        hovertext=[f"<b>{s}</b><br>{num(h)} hire dari {num(n)} kandidat"
+        hovertext=[f"<b>{s}</b><br>{num(h)} hires of {num(n)} candidates"
                    for s, h, n in zip(d["source_cv"], d["hired"], d["n"])],
         hovertemplate="%{hovertext}<extra></extra>",
         cliponaxis=False,

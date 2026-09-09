@@ -40,8 +40,8 @@ NAV = [
     ("overview", "Overview"),
     ("division", "Summary by Division"),
     ("weekly", "Weekly Report"),
-    ("tracking_candidate", "Tracking Kandidat"),
-    ("tracking_position", "Tracking Posisi"),
+    ("tracking_candidate", "Candidate Tracking"),
+    ("tracking_position", "Position Tracking"),
     ("prf", "PRF Tracking"),
     ("rec_room", "Recruitment Room"),
 ]
@@ -50,7 +50,7 @@ NAV = [
 # ===========================================================================
 # Data — cache di lapisan ini, loader tetap bisa dipanggil tanpa Streamlit
 # ===========================================================================
-@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Mengambil data kandidat…")
+@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Loading candidates…")
 def get_data():
     """Kembalikan (kandidat, tabel tahap, lead time). Kalender libur dipasang dulu.
 
@@ -69,7 +69,7 @@ def get_data():
     return df, sf, M.lead_time(df, sf)
 
 
-@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Mengambil data MPP…")
+@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Loading MPP data…")
 def get_mpp():
     """Sheet 'Update MPP' dari spreadsheet Report — sumber daftar karyawan resign.
 
@@ -92,7 +92,7 @@ def _site_of(loc: str) -> str | None:
 
 
 def _site_filter(df: pd.DataFrame, site_key: str | None) -> pd.DataFrame:
-    if not site_key or site_key == "Semua site":
+    if not site_key or site_key == "All sites":
         return df
     vals = [v.upper() for v in C.SITES[site_key]["loc_values"]]
     return df[df["loc"].isin(vals)]
@@ -121,7 +121,7 @@ def navbar():
                 st.session_state.page = key
                 st.rerun()
     with cols[-1], st.container(key="nav_logout"):
-        if st.button("Keluar", width="stretch", key="btn_logout"):
+        if st.button("Sign out", width="stretch", key="btn_logout"):
             auth.logout()
             st.rerun()
 
@@ -130,7 +130,7 @@ def data_or_stop():
     try:
         return get_data()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Data tidak bisa diambil.\n\n{exc}")
+        st.error(f"The data could not be loaded.\n\n{exc}")
         st.stop()
 
 
@@ -143,10 +143,13 @@ def _kontrol(s: dict):
         return st.multiselect(s["label"], s["options"], key=s["key"],
                               default=s.get("default", []),
                               help=s.get("help"),
-                              placeholder=s.get("placeholder", "Semua"))
+                              placeholder=s.get("placeholder", "All"))
     if jenis == "text":
         return st.text_input(s["label"], key=s["key"], help=s.get("help"),
                              placeholder=s.get("placeholder", ""))
+    if jenis == "date":
+        return st.date_input(s["label"], key=s["key"], help=s.get("help"),
+                             value=s.get("value"), format="DD/MM/YYYY")
     return st.selectbox(s["label"], s["options"], key=s["key"],
                         index=s.get("index", 0), help=s.get("help"),
                         **({"filter_mode": s["filter_mode"]} if s.get("filter_mode") else {}))
@@ -190,7 +193,7 @@ def _xlsx(judul: str, catatan: str, headers: tuple, rows: tuple,
     return XP.to_excel(df, judul, catatan)
 
 
-@st.cache_data(show_spinner="Menyiapkan gambar…", max_entries=32)
+@st.cache_data(show_spinner="Rendering image…", max_entries=32)
 def _png(judul: str, sub: str, headers: tuple, rows: tuple,
          total_row: tuple | None, align: str | None) -> bytes:
     df = XP.frame_dari_baris(list(headers), [list(r) for r in rows],
@@ -225,18 +228,18 @@ def unduh_saja(key: str, judul: str, sub: str, headers: list[str],
             mime=("application/vnd.openxmlformats-officedocument"
                   ".spreadsheetml.sheet"),
             key=f"dl_{key}_xls", width="stretch",
-            help="Isi tabel apa adanya, mengikuti filter yang sedang aktif")
+            help="The table exactly as shown, following the active filters")
     with k_png, st.container(key=f"unduh_{key}_png"):
         siap = f"siap_png_{key}"
         if len(rows) <= PNG_LANGSUNG_MAKS or st.session_state.get(siap):
             st.download_button(
-                "Gambar", _png(judul, sub, beku_h, beku_r, beku_t, align),
+                "Image", _png(judul, sub, beku_h, beku_r, beku_t, align),
                 file_name=XP.nama_berkas(judul, "png"), mime="image/png",
                 key=f"dl_{key}_png", width="stretch",
-                help="PNG tabel ini — seluruh baris ikut, tanpa perlu digulir")
-        elif st.button("Gambar", key=f"prep_{key}_png", width="stretch",
-                       help=f"Tabel ini {len(rows)} baris. Klik sekali untuk "
-                            "menyiapkan gambarnya."):
+                help="PNG of this table — every row included, no scrolling needed")
+        elif st.button("Image", key=f"prep_{key}_png", width="stretch",
+                       help=f"This table has {len(rows)} rows. Click once to "
+                            "prepare the image."):
             st.session_state[siap] = True
             st.rerun()
 
@@ -272,25 +275,25 @@ def page_overview():
     df, sf, lt = data_or_stop()
 
     (site,) = filterbar("ov", [
-        {"label": "Site", "key": "ov_site", "options": ["Semua site"] + list(C.SITES)},
+        {"label": "Site", "key": "ov_site", "options": ["All sites"] + list(C.SITES)},
     ])
 
-    if site != "Semua site":
+    if site != "All sites":
         keys = set(_site_filter(df, site)["cand_key"])
         df, lt = df[df["cand_key"].isin(keys)], lt[lt["cand_key"].isin(keys)]
         sf = sf[sf["cand_key"].isin(keys)]
 
     if not len(df):
-        st.markdown(theme.empty_state("Tidak ada kandidat", "Belum ada data untuk site ini."),
+        st.markdown(theme.empty_state("No candidates", "No data for this site yet."),
                     unsafe_allow_html=True)
         return
 
     h = M.headline(df, lt)
 
-    st.markdown(theme.section_heading(1, "Ringkasan", "kondisi pipeline saat ini"),
+    st.markdown(theme.section_heading(1, "Summary", "pipeline as it stands today"),
                 unsafe_allow_html=True)
     def persen(x):
-        return f'{x / h["candidates"] * 100:.1f}% dari total' if h["candidates"] else "—"
+        return f'{x / h["candidates"] * 100:.1f}% of total' if h["candidates"] else "—"
 
     # Satu baris lima kartu. Daftar backup candidate tidak ikut di sini — daftarnya hidup di
     # Recruitment Room, tempat orang benar-benar menindaklanjutinya, dan kartu
@@ -298,8 +301,8 @@ def page_overview():
     # keputusan apa pun.
     k = st.columns(5, gap="small")
     with k[0]:
-        st.markdown(theme.kpi_card("Total kandidat", n(h["candidates"]),
-                                   f'{n(h["open"])} masih berjalan', emoji="👥",
+        st.markdown(theme.kpi_card("Total candidates", n(h["candidates"]),
+                                   f'{n(h["open"])} still in process', emoji="👥",
                                    accent=theme.BRAND["navy"], value_size=28),
                     unsafe_allow_html=True)
     with k[1]:
@@ -308,7 +311,7 @@ def page_overview():
             accent=theme.STATUS["good"], value_size=28), unsafe_allow_html=True)
     with k[2]:
         st.markdown(theme.kpi_card(
-            "Backup candidate", n(h["talent_pool"]), "lolos, belum ditempatkan",
+            "Backup candidate", n(h["talent_pool"]), "passed, not yet placed",
             emoji="🗂️", accent=theme.BRAND["orange"], value_size=28),
             unsafe_allow_html=True)
     with k[3]:
@@ -316,10 +319,10 @@ def page_overview():
         nilai = n(rata["total"], 1) if rata["total"] else "—"
         st.markdown(theme.kpi_card(
             "Average to hire", nilai,
-            f'hari kerja · {rata["n_stage"]} tahap dijumlahkan',
+            f'working days · {rata["n_stage"]} stages summed',
             emoji="⏱️", value_size=28), unsafe_allow_html=True)
     with k[4]:
-        st.markdown(theme.kpi_card("Gagal", n(h["failed"]), persen(h["failed"]),
+        st.markdown(theme.kpi_card("Failed", n(h["failed"]), persen(h["failed"]),
                                    emoji="✕", accent=theme.STATUS["bad"], value_size=28),
                     unsafe_allow_html=True)
 
@@ -327,22 +330,23 @@ def page_overview():
         rinci = " · ".join(f'<b>{theme.esc(s)}</b> {n(v, 1)}'
                            for s, v, _c in rata["per_stage"])
         st.markdown(theme.inline_note(
-            f'<b>Average to hire</b> {n(rata["total"], 1)} hari kerja = penjumlahan '
-            "rata-rata TIAP tahap, dari PRF Approval sampai One Month Notice. Tiap "
-            "tahap dirata-rata dulu baru dijumlahkan, supaya tahap yang datanya "
-            "sedikit tidak tenggelam oleh tahap yang datanya banyak. Rinciannya: "
+            f'<b>Average to hire</b> {n(rata["total"], 1)} working days = the sum of '
+            "the average of EVERY stage, from PRF Approval to One Month Notice. "
+            "Each stage is averaged first and only then added up, so stages with "
+            "little data are not drowned out by stages with a lot. Breakdown: "
             f'{rinci}.', block=True), unsafe_allow_html=True)
 
     st.markdown(theme.inline_note(
-        "<b>Close</b> punya dua arti dan sengaja dipisah: <b>Close — Onboarding</b> "
-        "berarti orangnya masuk kerja, <b>Backup candidate</b> berarti orangnya lolos "
-        "seleksi tapi disimpan untuk kebutuhan berikutnya. Daftar lengkapnya beserta "
-        "nomor HP ada di <b>Recruitment Room</b>.",
+        "<b>Close</b> means two different things and is deliberately split: "
+        "<b>Close — Onboarding</b> means the person actually started work, "
+        "<b>Backup candidate</b> means they passed but are being held for the next "
+        "opening. The full list with phone numbers lives in "
+        "<b>Recruitment Room</b>.",
         block=True), unsafe_allow_html=True)
 
-    st.markdown(theme.section_heading(2, "Dashboard Looker", "Recruitment Dashboard"),
+    st.markdown(theme.section_heading(2, "Looker dashboard", "Recruitment Dashboard"),
                 unsafe_allow_html=True)
-    with theme.card("ov_looker", "Looker Studio", "visualisasi lengkap"):
+    with theme.card("ov_looker", "Looker Studio", "full visualisation"):
         # Filter site di atas TIDAK mengubah isi Looker — Looker punya filternya
         # sendiri di dalam frame.
         if hasattr(st, "iframe"):
@@ -364,15 +368,15 @@ def page_tracking_candidate():
     # pilihan, jadi orang harus mengetik lalu membuka dropdown lagi.
     pilihan = M.candidate_options(df)
     if not pilihan:
-        st.markdown(theme.empty_state("Belum ada kandidat", "—"), unsafe_allow_html=True)
+        st.markdown(theme.empty_state("No candidates yet", "—"), unsafe_allow_html=True)
         return
 
     with st.container(key="filterbar_tc"):
         label = st.selectbox(
-            "Cari kandidat — ketik namanya",
+            "Find a candidate — type the name",
             list(pilihan), key="tc_pick", filter_mode="contains",
-            help="Ketik namanya; saran yang muncul sudah menyebut posisi dan "
-                 "site, jadi dua orang bernama mirip langsung terbedakan.")
+            help="Type a name; each suggestion names the position and site, "
+                 "so two people with similar names are easy to tell apart.")
     pilih = pilihan[label]
 
     row = df[df["cand_key"] == pilih].iloc[0]
@@ -386,17 +390,18 @@ def page_tracking_candidate():
 
     if row["is_duplicate_name"]:
         st.markdown(theme.inline_note(
-            "Nama ini muncul lebih dari sekali — biasanya karena melamar lebih dari satu "
-            f'posisi. Yang ditampilkan: <b>{theme.esc(row.get("position_name"))}</b>.',
+            "This name appears more than once — usually because the person applied "
+            "for more than one position. Showing: "
+            f'<b>{theme.esc(row.get("position_name"))}</b>.',
             warn=True, block=True), unsafe_allow_html=True)
 
     st.markdown(theme.info_grid([
-        ("Posisi", theme.esc(row.get("position_name")), theme.esc(row.get("position_id"))),
-        ("Departemen", theme.esc(row.get("departement")), theme.esc(row.get("divisi"))),
-        ("Level", theme.esc(row["level"]), f'budget {C.total_budget(row["level"])} hari kerja'),
-        ("Lokasi", theme.esc(row.get("loc")), ""),
-        ("Sumber CV", theme.esc(row.get("source_cv")), ""),
-        ("Tahap terakhir", theme.esc(row.get("last_progress")), ""),
+        ("Position", theme.esc(row.get("position_name")), theme.esc(row.get("position_id"))),
+        ("Department", theme.esc(row.get("departement")), theme.esc(row.get("divisi"))),
+        ("Level", theme.esc(row["level"]), f'budget {C.total_budget(row["level"])} working days'),
+        ("Site", theme.esc(row.get("loc")), ""),
+        ("CV source", theme.esc(row.get("source_cv")), ""),
+        ("Last stage", theme.esc(row.get("last_progress")), ""),
     ]), unsafe_allow_html=True)
 
     berlaku = stages[stages["applicable"]]
@@ -413,10 +418,10 @@ def page_tracking_candidate():
 
     kartu = [
         ("SLA", n(sla_kandidat) if pd.notna(sla_kandidat) else "—",
-         f"hari kerja, {selesai} tahap terhitung", "⏱️", theme.BRAND["orange"]),
-        ("Budget SLA", n(ltrow["budget_total"]), f'target level {theme.esc(row["level"])}',
+         f"working days, {selesai} stages counted", "⏱️", theme.BRAND["orange"]),
+        ("SLA budget", n(ltrow["budget_total"]), f'target for level {theme.esc(row["level"])}',
          "🎯", theme.BRAND["navy"]),
-        ("Tahap terlambat", n(telat), f'dari {selesai} tahap selesai', "⚠️",
+        ("Stages late", n(telat), f'of {selesai} completed stages', "⚠️",
          theme.STATUS["bad"] if telat else theme.STATUS["good"]),
     ]
 
@@ -434,7 +439,7 @@ def page_tracking_candidate():
             import math
             perkiraan = M.estimate_date(est["total"])
             kartu.append(("Estimate Onboarding", f"{perkiraan:%d %b %Y}",
-                          f'{math.ceil(est["total"])} hari kerja lagi',
+                          f'{math.ceil(est["total"])} working days to go',
                           "📅", theme.STATUS["warn"]))
 
     for col, (lab, val, sub, emo, warna) in zip(
@@ -447,15 +452,16 @@ def page_tracking_candidate():
         rincian = " · ".join(
             f'<b>{theme.esc(x["tahap"])}</b> {n(x["hari"], 1)}' for x in est["rincian"])
         st.markdown(theme.inline_note(
-            f'Perkiraannya: sisa budget tahap yang sedang berjalan '
-            f'({n(est["sisa_tahap_ini"], 1)} hari) ditambah rata-rata tiap tahap yang '
-            f'belum dijalani ({n(est["tahap_berikutnya"], 1)} hari). Rata-ratanya '
-            f'dihitung per tahap dulu baru dijumlahkan, memakai kecepatan PIC '
-            f'kandidat ini kalau ada riwayatnya. Rinciannya: {rincian}.',
+            f'How it is estimated: what is left of the stage currently running '
+            f'({n(est["sisa_tahap_ini"], 1)} days) plus the average of every stage '
+            f'not yet started ({n(est["tahap_berikutnya"], 1)} days). Both are '
+            f'measured against how long each stage ACTUALLY takes, not against the '
+            f'SLA budget, using this candidate\u2019s own recruiter speed where '
+            f'there is history. Breakdown: {rincian}.',
             block=True), unsafe_allow_html=True)
 
-    with theme.card("tc_stages", "Tahap seleksi",
-                    "lead time dalam hari kerja, dibandingkan budget level ini"):
+    with theme.card("tc_stages", "Selection stages",
+                    "lead time in working days against this level\u2019s budget"):
         rows = []
         for s in stages.itertuples():
             if not s.applicable:
@@ -484,12 +490,12 @@ def page_tracking_candidate():
         # lencananya jadi teks: di Excel dan di gambar, warna saja tidak cukup
         # untuk menyampaikan "Late".
         unduh_saja(
-            "tc_stages", f'Tahap seleksi — {row["candidate_id"]}',
+            "tc_stages", f'Selection stages — {row["candidate_id"]}',
             f'{row.get("position_name") or "—"} · {row.get("loc") or "—"}',
-            ["Tahap", "Status", "Mulai", "Selesai", "LT", "Budget", "SLA"],
+            ["Stage", "Status", "Start", "End", "LT", "Budget", "SLA"],
             [[r["name"],
-              {"done": "Selesai", "active": "Berjalan", "idle": "Belum mulai",
-               "failed": "Gagal", "na": "Tidak berlaku"}[r["status"]],
+              {"done": "Done", "active": "Running", "idle": "Not started",
+               "failed": "Failed", "na": "N/A"}[r["status"]],
               str(r["start"] or "—"), str(r["end"] or "—"),
               "—" if r["lt"] is None else str(r["lt"]),
               "—" if r["budget"] is None else str(r["budget"]),
@@ -512,25 +518,25 @@ def _segmen(r: dict) -> list[tuple[str, int, str]]:
     dijelaskan apa pun, dan celah yang tidak dijelaskan selalu dibaca sebagai bug.
     """
     utama = [
-        ("berjalan", r["ongoing"], theme.STATUS["warn"]),
+        ("in process", r["ongoing"], theme.STATUS["warn"]),
         ("onboarding", r["hired"], theme.STATUS["good"]),
         ("backup candidate", r["pool"], theme.BRAND["orange"]),
-        ("gagal", r["gagal"], theme.STATUS["bad"]),
+        ("failed", r["gagal"], theme.STATUS["bad"]),
     ]
     sisa = r["kandidat"] - sum(v for _l, v, _c in utama)
     if sisa > 0:
-        utama.append(("hold / lainnya", sisa, theme.NEUTRAL["text_soft"]))
+        utama.append(("hold / other", sisa, theme.NEUTRAL["text_soft"]))
     return utama
 
 
 def _kartu_ringkas(r: dict):
     """Lima kartu KPI dengan definisi yang sama di mana pun dipakai."""
     isi = [
-        ("Kandidat", r["kandidat"], "👥", theme.BRAND["navy"]),
-        ("Masih berjalan", r["ongoing"], "⏳", theme.STATUS["warn"]),
-        ("Onboarding", r["hired"], "✅", theme.STATUS["good"]),
-        ("Backup candidate", r["pool"], "🗂️", theme.BRAND["orange"]),
-        ("Gagal", r["gagal"], "✕", theme.STATUS["bad"]),
+        ("Candidates", r["kandidat"], "👥", theme.BRAND["navy"]),
+        ("In process", r["ongoing"], "⏳", theme.STATUS["warn"]),
+        ("Onboarded", r["hired"], "✅", theme.STATUS["good"]),
+        ("Backup", r["pool"], "🗂️", theme.BRAND["orange"]),
+        ("Failed", r["gagal"], "✕", theme.STATUS["bad"]),
     ]
     for col, (lab, val, emo, warna) in zip(st.columns(len(isi), gap="small"), isi):
         with col:
@@ -571,7 +577,7 @@ def _sel_est(estimasi, status=None):
     proses yang sudah berhenti bukan informasi, cuma angka yang menempel.
     """
     if status is not None and status != "OPEN":
-        return f'<span style="color:{theme.NEUTRAL["text_soft"]}">selesai</span>'
+        return f'<span style="color:{theme.NEUTRAL["text_soft"]}">closed</span>'
     tanggal = M.estimate_date(estimasi) if pd.notna(estimasi) else None
     if tanggal is None:
         return f'<span style="color:{theme.NEUTRAL["text_soft"]}">—</span>'
@@ -583,39 +589,39 @@ def _filter_posisi(df, sf):
     """Satu panel filter untuk kedua mode: bulan (screening CV) dan site."""
     bulan_ada = M.month_options(df, sf)
     bulan_p, site_p = filterbar("tp_f", [
-        {"label": "Bulan (tanggal Screening CV)", "key": "tp_bulan", "kind": "multi",
+        {"label": "Month (CV Screening date)", "key": "tp_bulan", "kind": "multi",
          "options": bulan_ada, "default": [], "width": 2,
-         "placeholder": "Semua bulan — pilih beberapa untuk mempersempit"},
+         "placeholder": "All months — pick some to narrow it down"},
         {"label": "Site", "key": "tp_site_f", "kind": "multi",
-         "options": list(C.SITES), "default": [], "placeholder": "Semua site"},
+         "options": list(C.SITES), "default": [], "placeholder": "All sites"},
     ])
     d = M.filter_month(df, sf, bulan_p)
     if site_p:
         d = d[d["loc"].isin(C.loc_values_for(site_p))]
     label = " · ".join(x for x in [", ".join(bulan_p), ", ".join(site_p)] if x)
-    return d, (label or "semua bulan · semua site")
+    return d, (label or "all months · all sites")
 
 
 def _mode_posisi(df, sf, lt):
     """Cari satu posisi, lihat detail prosesnya."""
     d, label = _filter_posisi(df, sf)
     if d.empty:
-        st.markdown(theme.empty_state("Tidak ada kandidat", "Longgarkan filternya."),
+        st.markdown(theme.empty_state("No candidates", "Loosen the filters."),
                     unsafe_allow_html=True)
         return
 
     pilihan = M.position_options(d)
     with st.container(key="filterbar_tp_cari"):
         judul = st.selectbox(
-            "Cari posisi — ketik nama posisinya", list(pilihan), key="tp_pick",
+            "Find a position — type the position name", list(pilihan), key="tp_pick",
             filter_mode="contains",
-            help="Saran yang muncul sudah menyebut site dan departemen.")
+            help="Each suggestion names the site and the department.")
     posisi, loc = pilihan[judul]
 
     est_semua = _estimasi_semua(sf, df)
     kand = M.position_candidates(d, lt, posisi, loc, sf=sf, estimasi=est_semua)
     if kand.empty:
-        st.markdown(theme.empty_state("Tidak ada kandidat", "—"), unsafe_allow_html=True)
+        st.markdown(theme.empty_state("No candidates", "—"), unsafe_allow_html=True)
         return
 
     sub = d[(d["position_name"] == posisi) & (d["loc"] == loc)]
@@ -628,16 +634,16 @@ def _mode_posisi(df, sf, lt):
         tag=theme.esc(baris0.get("position_id"))), unsafe_allow_html=True)
     _kartu_ringkas(ring)
 
-    with theme.card("tp_kand", "Kandidat posisi ini", f"{len(kand)} orang · {label}"):
+    with theme.card("tp_kand", "Candidates for this position", f"{len(kand)} people · {label}"):
         st.markdown(theme.split_bar(_segmen(ring), ring["kandidat"]),
                     unsafe_allow_html=True)
         jalan = M.last_progress_breakdown(sub)
         if jalan:
-            st.markdown('<div class="dh-secnote">Yang masih berjalan, berhenti di:</div>'
+            st.markdown('<div class="dh-secnote">Still in process, stopped at:</div>'
                         + theme.chip_row(jalan), unsafe_allow_html=True)
         st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-        tabel("tp_kand", f"Kandidat {posisi}", f"{loc or '—'} · {label}",
-              ["Kandidat", "Level", "Site", "Last progress",
+        tabel("tp_kand", f"Candidates — {posisi}", f"{loc or '—'} · {label}",
+              ["Candidate", "Level", "Site", "Last progress",
                "SLA / target", "Estimate Onboarding", "Status"],
               [[theme.esc(r.candidate_id), theme.esc(r.level), theme.esc(r.loc),
                 theme.esc(r.last_progress),
@@ -646,21 +652,50 @@ def _mode_posisi(df, sf, lt):
                 theme.result_pill(r.status1)]
                for r in kand.itertuples()], align="llllrrl")
         st.markdown(theme.inline_note(
-            "Kolom <b>SLA / target</b>: angka kiri adalah hari kerja yang sudah "
-            "terpakai, dijumlahkan dari tiap tahap — jadi kandidat yang masih "
-            "berjalan atau gagal pun punya angka; angka kanan abu adalah budget "
-            "SLA level itu. Kolom <b>Estimate Onboarding</b> adalah "
-            f'<span style="color:{theme.STATUS["warn"]}">tanggal</span> perkiraan '
-            "kandidat masuk kerja untuk yang masih OPEN — hari kerja, libur "
-            "nasional sudah dikeluarkan, dan dibulatkan ke atas.",
+            "<b>SLA / target</b>: the left number is working days used, summed stage "
+            "by stage — so candidates still running or already failed have a "
+            "number too; the grey number on the right is the SLA budget for that "
+            "level. <b>Estimate Onboarding</b> is the projected "
+            f'<span style="color:{theme.STATUS["warn"]}">start date</span> for '
+            "anyone still OPEN — working days, public holidays excluded, rounded up.",
             block=True), unsafe_allow_html=True)
 
 
+# Kolom tabel departemen. Baris posisi dan baris kandidat berbagi kolom yang
+# sama — itu yang membuat grouping terbaca: kolom yang tidak berlaku dibiarkan
+# kosong, bukan diisi tanda hubung yang menambah kebisingan.
+KOLOM_DEP = [
+    {"label": "Position / Candidate", "align": "l"},
+    {"label": "Level", "align": "l"},
+    {"label": "Site", "align": "l"},
+    {"label": "Last stage", "align": "l", "sep": True},
+    {"label": "Candidates", "align": "r", "sep": True},
+    {"label": "In process", "align": "r"},
+    {"label": "Onboarded", "align": "r"},
+    {"label": "Backup", "align": "r"},
+    {"label": "Failed", "align": "r"},
+    {"label": "SLA / target", "align": "r", "sep": True},
+    {"label": "Estimate Onboarding", "align": "r"},
+    {"label": "Status", "align": "l"},
+]
+HEAD_DEP = [k["label"] for k in KOLOM_DEP]
+ALIGN_DEP = "".join(k["align"] for k in KOLOM_DEP)
+
+
 def _mode_departemen(df, sf, lt):
-    """Pilih departemen, lalu buka posisinya satu per satu."""
+    """Satu departemen, satu tabel: posisinya di baris utama, kandidatnya di
+    dalam.
+
+    Bentuknya sengaja disamakan dengan Summary by Division (arahan Navi, 8 Sep
+    2026): klik [+] di depan nama posisi dan kandidatnya muncul tepat di
+    bawahnya. Sebelumnya tiap posisi adalah satu expander Streamlit — Plant &
+    Maintenance punya 79 posisi, dan 79 kotak yang harus dibuka satu-satu bukan
+    tracking, cuma daftar panjang. Dalam satu tabel, posisi bisa dibandingkan
+    menurun dan kandidatnya tetap sejangkauan satu klik.
+    """
     d, label = _filter_posisi(df, sf)
     if d.empty:
-        st.markdown(theme.empty_state("Tidak ada kandidat", "Longgarkan filternya."),
+        st.markdown(theme.empty_state("No candidates", "Loosen the filters."),
                     unsafe_allow_html=True)
         return
 
@@ -668,103 +703,100 @@ def _mode_departemen(df, sf, lt):
     dep_ring = M.department_summary(d)
     daftar = dep_ring["departement"].tolist()
     if not daftar:
-        st.markdown(theme.empty_state("Belum ada departemen", "—"),
+        st.markdown(theme.empty_state("No departments yet", "—"),
                     unsafe_allow_html=True)
         return
 
     with st.container(key="filterbar_tp_dep"):
         dep = st.selectbox(
-            "Pilih departemen", daftar, key="tp_dep_pick", filter_mode="contains",
-            format_func=lambda x: x,
-            help="Diurutkan dari yang paling banyak kandidatnya masih berjalan.")
+            "Department", daftar, key="tp_dep_pick", filter_mode="contains",
+            help="Sorted by how many candidates are still in process.")
 
     sub = d[d["departement"] == dep]
     ring = M._ringkas(sub)
     pos = M.position_summary(d, dep)
 
     st.markdown(theme.section_heading(
-        1, theme.esc(dep), f'{len(pos)} posisi · {label}'), unsafe_allow_html=True)
+        1, theme.esc(dep), f'{len(pos)} positions · {label}'), unsafe_allow_html=True)
     _kartu_ringkas(ring)
 
-    with theme.card("tp_depbar", "Sebaran departemen ini", label):
+    with theme.card("tp_depbar", "Department breakdown", label):
         st.markdown(theme.split_bar(_segmen(ring), ring["kandidat"]),
                     unsafe_allow_html=True)
         jalan = M.last_progress_breakdown(sub)
         if jalan:
-            st.markdown('<div class="dh-secnote">Yang masih berjalan, berhenti di:</div>'
+            st.markdown('<div class="dh-secnote">Still in process, stopped at:</div>'
                         + theme.chip_row(jalan), unsafe_allow_html=True)
 
     # Yang ditampilkan lebih dulu hanya posisi yang MASIH ADA ORANGNYA jalan —
-    # itu arti "posisi yang dibuka". Plant & Maintenance punya 79 posisi tercatat
-    # dan hanya 35 yang masih berjalan; menampilkan 79 kotak sekaligus membuat
-    # yang penting tenggelam, dan halamannya berat.
+    # itu arti "posisi yang dibuka". Posisi yang sudah selesai tetap bisa
+    # dimunculkan lewat tombol, tapi tidak menenggelamkan yang sedang berjalan.
     jalan_saja = pos[pos["ongoing"] > 0]
     semua = st.toggle(
-        f"Tampilkan juga posisi yang sudah selesai ({len(pos) - len(jalan_saja)})",
+        f"Also show closed positions ({len(pos) - len(jalan_saja)})",
         key="tp_dep_semua", value=False,
-        help="Posisi yang sudah tidak punya kandidat berjalan — sudah terisi, "
-             "gagal semua, atau prosesnya berhenti.")
+        help="Positions with no candidate still in process — filled, all failed, "
+             "or on hold.")
     tampil = pos if semua else jalan_saja
 
     st.markdown(theme.section_heading(
-        2, "Posisi yang dibuka",
-        f"{len(tampil)} posisi · klik satu untuk melihat kandidatnya"),
+        2, "Open positions",
+        f"{len(tampil)} positions · click [+] to see the candidates"),
         unsafe_allow_html=True)
 
     if tampil.empty:
         st.markdown(theme.empty_state(
-            "Tidak ada posisi yang masih berjalan",
-            "Nyalakan tombol di atas untuk melihat posisi yang sudah selesai."),
+            "No position still in process",
+            "Turn on the switch above to see the closed ones."),
             unsafe_allow_html=True)
         return
 
-    for i, r in enumerate(tampil.itertuples()):
-        judul = (f"{r.position_name}  ·  {r.loc}  ·  {r.kandidat} kandidat, "
-                 f"{r.ongoing} masih berjalan")
-        with st.expander(judul, expanded=(i == 0 and len(pos) <= 3)):
-            r_ring = {"kandidat": r.kandidat, "ongoing": r.ongoing, "hired": r.hired,
-                      "pool": r.pool, "gagal": r.gagal}
-            st.markdown(theme.stat_inline([
-                ("Level", str(r.level)),
-                ("Kandidat", n(r.kandidat)),
-                ("Berjalan", n(r.ongoing)),
-                ("Onboarding", n(r.hired)),
-                ("Gagal", n(r.gagal)),
-            ]), unsafe_allow_html=True)
-            st.markdown(theme.split_bar(_segmen(r_ring), r.kandidat),
-                        unsafe_allow_html=True)
+    kosong = ""
+    baris, unduh = [], []
+    for r in tampil.itertuples():
+        sel = [f"<b>{theme.esc(r.position_name)}</b>", theme.esc(str(r.level)),
+               theme.esc(r.loc), kosong,
+               n(r.kandidat), n(r.ongoing), n(r.hired), n(r.pool), n(r.gagal),
+               kosong, kosong, kosong]
+        unduh.append(_baris_polos([r.position_name] + sel[1:]))
 
-            posisi_sub = sub[(sub["position_name"] == r.position_name)
-                             & (sub["loc"] == r.loc)]
-            pecah = M.last_progress_breakdown(posisi_sub)
-            if pecah:
-                st.markdown(
-                    '<div class="dh-secnote">Yang masih berjalan, berhenti di:</div>'
-                    + theme.chip_row(pecah), unsafe_allow_html=True)
+        kand = M.position_candidates(sub, lt, r.position_name, r.loc, sf=sf,
+                                     estimasi=est_semua)
+        detail = []
+        for x in kand.itertuples():
+            dsel = [theme.esc(x.candidate_id), theme.esc(x.level), theme.esc(x.loc),
+                    theme.esc(x.last_progress),
+                    kosong, kosong, kosong, kosong, kosong,
+                    _sel_sla(x.total_lt, x.budget_total),
+                    _sel_est(x.estimasi, x.status1),
+                    theme.result_pill(x.status1)]
+            detail.append(dsel)
+            unduh.append(_baris_polos([f"   {x.candidate_id}"] + dsel[1:]))
+        baris.append({"cells": sel, "detail": detail})
 
-            jalan = M.ongoing_candidates(sub, lt, dep, position_name=r.position_name,
-                                         sf=sf, estimasi=est_semua)
-            jalan = jalan[jalan["loc"] == r.loc]
-            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-            if jalan.empty:
-                st.markdown(theme.inline_note(
-                    "Tidak ada kandidat yang prosesnya masih berjalan di posisi ini.",
-                    block=True), unsafe_allow_html=True)
-            else:
-                tabel(f"tpd_{i}", f"Sedang diproses — {r.position_name}",
-                      f"{r.loc} · {label}",
-                      ["Kandidat", "Level", "Tahap terakhir", "SLA / target",
-                       "Estimate Onboarding"],
-                      [[theme.esc(x.candidate_id), theme.esc(x.level),
-                        theme.esc(x.last_progress),
-                        _sel_sla(x.lt_elapsed, x.budget_total),
-                        _sel_est(x.estimasi, "OPEN")]
-                       for x in jalan.itertuples()], align="lllrr")
+    total_sel = ["TOTAL", "", "", "", n(ring["kandidat"]), n(ring["ongoing"]),
+                 n(ring["hired"]), n(ring["pool"]), n(ring["gagal"]), "", "", ""]
+
+    unduh_saja("tp_dep", f"{dep} — positions & candidates", label,
+               HEAD_DEP, unduh, align=ALIGN_DEP,
+               total_row=_baris_polos(total_sel))
+    st.markdown(theme.group_table(
+        "tpd", KOLOM_DEP, baris, tinggi=560,
+        petunjuk=f"{len(tampil)} positions · [+] opens the candidates",
+        total=total_sel), unsafe_allow_html=True)
+
+    st.markdown(theme.inline_note(
+        "Count columns belong to the <b>position</b> rows; SLA, Estimate "
+        "Onboarding and Status belong to the <b>candidate</b> rows underneath. "
+        "<b>SLA / target</b> is working days used, summed stage by stage, against "
+        "the SLA budget for that level — so candidates still running or already "
+        "failed have a number too. <b>Estimate Onboarding</b> is the projected "
+        "start date for anyone still OPEN.", block=True), unsafe_allow_html=True)
 
 
 MODE_POSISI = {
-    "Per Posisi": _mode_posisi,
-    "Per Departemen": _mode_departemen,
+    "By Position": _mode_posisi,
+    "By Department": _mode_departemen,
 }
 
 
@@ -784,9 +816,9 @@ def page_tracking_position():
 
     with st.container(key="modebar_tp"):
         mode = st.segmented_control(
-            "Mode", list(MODE_POSISI), default="Per Posisi", key="tp_mode",
+            "Mode", list(MODE_POSISI), default="By Position", key="tp_mode",
             label_visibility="collapsed")
-    MODE_POSISI[mode or "Per Posisi"](df, sf, lt)
+    MODE_POSISI[mode or "By Position"](df, sf, lt)
 
 
 # ===========================================================================
@@ -802,15 +834,15 @@ def page_weekly():
     # New Hire, Ringkasan per site, On Progress, dan Karyawan resign — membaca
     # pilihan yang sama.
     tahun_pilih, bulan_pilih, site_pilih = filterbar("wk", [
-        {"label": "Tahun", "key": "wk_year", "kind": "multi",
+        {"label": "Year", "key": "wk_year", "kind": "multi",
          "options": [str(y) for y in tahun_ada], "default": thn_default, "width": 1,
-         "placeholder": "Pilih tahun"},
-        {"label": "Bulan", "key": "wk_month", "kind": "multi",
+         "placeholder": "Year"},
+        {"label": "Month", "key": "wk_month", "kind": "multi",
          "options": list(M.BULAN_NAMA.values()), "default": [], "width": 2,
-         "placeholder": "Semua bulan — pilih beberapa untuk membandingkan"},
+         "placeholder": "All months — pick several to compare"},
         {"label": "Site", "key": "wk_site", "kind": "multi",
          "options": list(C.SITES), "default": [], "width": 1,
-         "placeholder": "Semua site"},
+         "placeholder": "All sites"},
     ])
 
     periods = periode_terpilih(tahun_pilih, bulan_pilih)
@@ -821,21 +853,21 @@ def page_weekly():
     if periods:
         dari = min(pd.Timestamp(t, b, 1) for t, b in periods)
         sampai = max(pd.Timestamp(t, b, 1) + pd.offsets.MonthEnd(1) for t, b in periods)
-        label_periode = f"{dari.date()} s/d {sampai.date()}"
+        label_periode = f"{dari.date()} to {sampai.date()}"
     else:
         dari = sampai = None
         label_periode = "sepanjang waktu"
-    label_site = ", ".join(site_pilih) if site_pilih else "semua site"
+    label_site = ", ".join(site_pilih) if site_pilih else "all sites"
 
     # ── Performance ────────────────────────────────────────────────────────
     st.markdown(theme.section_heading(
-        1, "Performance recruiter",
-        "rata-rata tiap tahap dijumlahkan, seluruh tahap proses ikut dihitung"),
+        1, "Recruiter performance",
+        "the average of each stage, summed across every process stage"),
         unsafe_allow_html=True)
 
     perf = M.recruiter_performance(sf, dari, sampai, sites=site_pilih)
     with theme.card("wk_perf", "Performance",
-                    f"periode screening CV · {label_periode} · {label_site}"):
+                    f"CV screening period · {label_periode} · {label_site}"):
         baris = []
         for r in perf.itertuples():
             ach = r.achievement
@@ -849,30 +881,31 @@ def page_weekly():
                  if pd.notna(ach) else "—"),
                 n(r.candidates), n(r.onboarding),
             ])
-        tabel("wk_perf", "Performance recruiter",
+        tabel("wk_perf", "Recruiter performance",
               f"{label_periode} · {label_site}",
-              ["Nama", "SLA Actual", "SLA Budget", "Achievement", "Kandidat",
-               "Onboarding"], baris, align="lrrrrr", max_rows=None)
+              ["Recruiter", "SLA actual", "SLA budget", "Achievement", "Candidates",
+               "Onboarded"], baris, align="lrrrrr", max_rows=None)
         st.markdown(theme.inline_note(
-            "<b>Kandidat</b> memakai tanggal <b>Screening CV</b> — berapa CV yang orang itu "
-            "proses di periode ini. <b>Onboarding</b> memakai tanggal <b>onboarding</b> — "
-            "berapa yang benar-benar mulai kerja di periode ini. Dua basis tanggal yang "
-            "berbeda, dan itu disengaja: dengan begitu kolom Onboarding kalau dijumlahkan "
-            "ke bawah sama persis dengan total <b>Ringkasan per site</b> di bawah. "
-            "Kandidat yang kolom PIC-nya kosong masuk ke baris <b>PIC Site …</b>, bukan "
-            "hilang. <b>SLA</b> menjumlahkan rata-rata tiap tahap dari seluruh tahap proses, "
-            "termasuk One Month Notice; <b>Achievement</b> = Budget ÷ Actual.",
+            "<b>Candidates</b> uses the <b>CV Screening</b> date — how many CVs that "
+            "person processed in this period. <b>Onboarded</b> uses the "
+            "<b>onboarding</b> date — how many actually started work in this period. "
+            "Two different date bases, and that is deliberate: it is what makes the "
+            "Onboarded column add up to exactly the same total as <b>Summary per "
+            "site</b> below. Candidates with an empty PIC land in the <b>PIC Site …</b> "
+            "row rather than disappearing. <b>SLA</b> sums the average of every "
+            "process stage, One Month Notice included; <b>Achievement</b> = "
+            "Budget ÷ Actual.",
             block=True), unsafe_allow_html=True)
 
     # ── New Hire ───────────────────────────────────────────────────────────
-    st.markdown(theme.section_heading(2, "New Hire", "onboarding per departemen"),
+    st.markdown(theme.section_heading(2, "New Hire", "onboarding per department"),
                 unsafe_allow_html=True)
     with theme.card("wk_nh", "New Hire", f"{label_periode} · {label_site}"):
         nh = M.new_hire_matrix(df, periods, sites=site_pilih)
         if nh.empty:
             st.markdown(theme.empty_state(
-                "Belum ada onboarding di periode ini",
-                "Ubah pilihan tahun, bulan, atau site di filter atas."), unsafe_allow_html=True)
+                "No onboarding in this period",
+                "Change the year, month or site above."), unsafe_allow_html=True)
         else:
             kolom = list(nh.columns)
             isi = [[theme.esc(r[0])] + [n(v) for v in r[1:]] for r in nh.values.tolist()]
@@ -881,18 +914,18 @@ def page_weekly():
                   align="l" + "r" * (len(kolom) - 1))
 
     # ── Ringkasan per site ─────────────────────────────────────────────────
-    st.markdown(theme.section_heading(3, "Ringkasan per site", "onboarding per site"),
+    st.markdown(theme.section_heading(3, "Summary per site", "onboarding per site"),
                 unsafe_allow_html=True)
     with theme.card("wk_sum", "Summary", f"{label_periode} · {label_site}"):
         sm = M.summary_matrix(df, periods, sites=site_pilih)
         if sm.empty:
             st.markdown(theme.empty_state(
-                "Belum ada onboarding di periode ini",
-                "Ubah pilihan tahun, bulan, atau site di filter atas."), unsafe_allow_html=True)
+                "No onboarding in this period",
+                "Change the year, month or site above."), unsafe_allow_html=True)
         else:
             kolom = list(sm.columns)
             isi = [[theme.esc(r[0])] + [n(v) for v in r[1:]] for r in sm.values.tolist()]
-            tabel("wk_sum", "Ringkasan per site", f"{label_periode} · {label_site}",
+            tabel("wk_sum", "Summary per site", f"{label_periode} · {label_site}",
                   kolom, isi[:-1], total_row=isi[-1],
                   align="l" + "r" * (len(kolom) - 1))
 
@@ -903,14 +936,14 @@ def page_weekly():
     panels = M.on_progress(df, periods=periods, sites=site_pilih)
     cols = st.columns(3, gap="small")
     for col, (nama, sel) in zip(cols, panels.items()):
-        with col, theme.card(f"wk_onp_{nama}", nama, f"{len(sel)} kandidat"):
+        with col, theme.card(f"wk_onp_{nama}", nama, f"{len(sel)} candidates"):
             if sel.empty:
-                st.markdown(theme.empty_state("Kosong", "Tidak ada di tahap ini.", emoji="—"),
+                st.markdown(theme.empty_state("Empty", "Nobody at this stage.", emoji="—"),
                             unsafe_allow_html=True)
             else:
                 tabel(f"wk_onp_{nama}", f"On Progress {nama}",
                       f"{label_periode} · {label_site}",
-                      ["Kandidat", "Posisi", "Site", "Tanggal"],
+                      ["Candidate", "Position", "Site", "Date"],
                       [[theme.esc(r.candidate_id), theme.esc(r.position_name),
                         theme.esc(r.loc),
                         theme.esc(r.tanggal.date() if pd.notna(r.tanggal) else None)]
@@ -918,27 +951,28 @@ def page_weekly():
 
     # ── Karyawan resign ────────────────────────────────────────────────────
     st.markdown(theme.section_heading(
-        5, "Karyawan resign", "tanggal resign dan site mengikuti filter di atas"),
+        5, "Resignations", "resignation date and site follow the filters above"),
         unsafe_allow_html=True)
     with theme.card("wk_resign", "Resign",
-                    f"{label_periode} · {label_site} · level di bawah 11"):
+                    f"{label_periode} · {label_site} · levels below 11"):
         mpp = get_mpp()
         if mpp is None:
             st.markdown(theme.empty_state(
-                "Data MPP belum bisa diambil",
-                "Sheet <b>Update MPP</b> di spreadsheet Report belum terbaca. Pastikan "
-                "spreadsheet-nya di-share 'Anyone with the link — Viewer'.", emoji="🔌"),
+                "MPP data could not be loaded",
+                "The <b>Update MPP</b> tab in the Report spreadsheet could not be read. "
+                "Make sure the spreadsheet is shared as 'Anyone with the link — "
+                "Viewer'.", emoji="🔌"),
                 unsafe_allow_html=True)
         else:
             res = M.resign(mpp, periods=periods, sites=site_pilih)
             if res.empty:
-                st.markdown(theme.empty_state("Tidak ada yang resign di periode ini", "—"),
+                st.markdown(theme.empty_state("No resignations in this period", "—"),
                             unsafe_allow_html=True)
             else:
-                tabel("wk_resign", "Karyawan resign",
+                tabel("wk_resign", "Resignations",
                       f"{label_periode} · {label_site}",
-                      ["Karyawan", "Posisi", "Site", "Tanggal resign",
-                       "Akhir kontrak", "Level"],
+                      ["Employee", "Position", "Site", "Resignation date",
+                       "Contract end", "Level"],
                       [[theme.esc(r[1]), theme.esc(r[2]), theme.esc(r[3]),
                         theme.esc(r[4].date() if pd.notna(r[4]) else None),
                         theme.esc(r[5].date() if pd.notna(r[5]) else None),
@@ -948,7 +982,7 @@ def page_weekly():
 # ===========================================================================
 # ⑤ PRF TRACKING
 # ===========================================================================
-@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Mengambil data PRF…")
+@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Loading PRF data…")
 def get_prf():
     return M.prepare_prf(DL.load_prf())
 
@@ -957,7 +991,7 @@ def page_prf():
     try:
         prf = get_prf()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Data PRF tidak bisa diambil.\n\n{exc}")
+        st.error(f"The PRF data could not be loaded.\n\n{exc}")
         st.stop()
 
     # Pilihan filter diambil dari data untuk site/level/divisi, tapi Tracking dan
@@ -969,16 +1003,16 @@ def page_prf():
 
     site_p, level_p, jenis_p, track_p, status_p = filterbar("prf", [
         {"label": "Site", "key": "prf_site", "kind": "multi",
-         "options": site_opt, "default": [], "placeholder": "Semua site"},
+         "options": site_opt, "default": [], "placeholder": "All sites"},
         {"label": "Level", "key": "prf_level", "kind": "multi",
-         "options": level_opt, "default": [], "placeholder": "Semua level"},
-        {"label": "Jenis Level", "key": "prf_jenis", "kind": "multi",
+         "options": level_opt, "default": [], "placeholder": "All levels"},
+        {"label": "Level type", "key": "prf_jenis", "kind": "multi",
          "options": ["Staff", "Non Staff"], "default": [],
          "placeholder": "Staff & Non Staff"},
         {"label": "Tracking PRF", "key": "prf_track", "kind": "multi",
-         "options": C.PRF_TRACKING_VALUES, "default": [], "placeholder": "Semua"},
+         "options": C.PRF_TRACKING_VALUES, "default": [], "placeholder": "All"},
         {"label": "Status PRF", "key": "prf_status", "kind": "multi",
-         "options": C.PRF_STATUS_VALUES, "default": [], "placeholder": "Semua"},
+         "options": C.PRF_STATUS_VALUES, "default": [], "placeholder": "All"},
     ])
 
     d = M.filter_prf(prf, sites=site_p, levels=level_p, level_types=jenis_p,
@@ -986,50 +1020,50 @@ def page_prf():
     s = M.prf_summary(d)
 
     dipilih = [", ".join(x) for x in (site_p, level_p, jenis_p, track_p, status_p) if x]
-    label_filter = " · ".join(dipilih) if dipilih else "semua PRF"
+    label_filter = " · ".join(dipilih) if dipilih else "all PRFs"
 
     # ── Kartu ──────────────────────────────────────────────────────────────
-    st.markdown(theme.section_heading(1, "Ringkasan PRF", label_filter),
+    st.markdown(theme.section_heading(1, "PRF summary", label_filter),
                 unsafe_allow_html=True)
     k = st.columns(4, gap="small")
     with k[0]:
         st.markdown(theme.kpi_card(
-            "Jumlah PRF", n(s["total"]), f'{n(s["qty"])} orang diminta',
+            "PRF count", n(s["total"]), f'{n(s["qty"])} people requested',
             emoji="📄", accent=theme.BRAND["navy"], value_size=28),
             unsafe_allow_html=True)
     with k[1]:
         st.markdown(theme.kpi_card(
-            "Approved", n(s["approved"]), f'{n(s["approved_pct"], 1)}% dari total PRF',
+            "Approved", n(s["approved"]), f'{n(s["approved_pct"], 1)}% of all PRFs',
             emoji="✅", accent=theme.STATUS["good"], value_size=28),
             unsafe_allow_html=True)
     with k[2]:
         st.markdown(theme.kpi_card(
             "Not Approved", n(s["not_approved"]),
-            f'{n(s["not_approved_pct"], 1)}% dari total PRF',
+            f'{n(s["not_approved_pct"], 1)}% of all PRFs',
             emoji="⏳", accent=theme.STATUS["warn"], value_size=28),
             unsafe_allow_html=True)
     with k[3]:
         st.markdown(theme.kpi_card(
-            "Status Close", n(s["close"]), f'{n(s["close_pct"], 1)}% dari total PRF',
+            "Status Close", n(s["close"]), f'{n(s["close_pct"], 1)}% of all PRFs',
             emoji="🔒", accent=theme.BRAND["orange"], value_size=28),
             unsafe_allow_html=True)
 
     st.markdown(theme.inline_note(
-        "<b>Approved</b> dan <b>Not Approved</b> dibaca dari kolom Tracking PRF — "
-        "pengajuannya sudah disetujui atau masih berjalan. <b>Status Close</b> dibaca "
-        "dari kolom Status dan persentasenya dihitung terhadap <b>total PRF</b>, bukan "
-        "terhadap yang approved saja. Semua angka menghitung <b>baris PRF</b>, bukan qty "
-        "orang — satu PRF bisa meminta beberapa orang sekaligus, dan qty-nya tetap "
-        "terlihat di tiap baris tabel.",
+        "<b>Approved</b> and <b>Not Approved</b> come from the PRF Tracking column — "
+        "the request is either approved or still moving. <b>Status Close</b> comes "
+        "from the Status column and its percentage is measured against <b>all "
+        "PRFs</b>, not only the approved ones. Every figure counts <b>PRF rows</b>, "
+        "not headcount — one PRF can ask for several people at once, and that qty "
+        "is shown on every row of the table.",
         block=True), unsafe_allow_html=True)
 
     # ── Tabel ──────────────────────────────────────────────────────────────
-    st.markdown(theme.section_heading(2, "Daftar PRF", "satu baris satu pengajuan"),
+    st.markdown(theme.section_heading(2, "PRF list", "one row per request"),
                 unsafe_allow_html=True)
-    with theme.card("prf_tabel", "PRF", f"{n(len(d))} baris · {label_filter}"):
+    with theme.card("prf_tabel", "PRF", f"{n(len(d))} rows · {label_filter}"):
         if d.empty:
             st.markdown(theme.empty_state(
-                "Tidak ada PRF", "Tidak ada baris yang cocok dengan filter di atas."),
+                "No PRF", "No row matches the filters above."),
                 unsafe_allow_html=True)
             return
 
@@ -1044,28 +1078,41 @@ def page_prf():
             ])
         tabel("prf_tabel", "PRF Tracking", label_filter,
               ["Request Number", "PRF Class", "Qty", "Position Name", "Site",
-               "Divisi", "Level", "Tracking PRF", "Status PRF"],
+               "Division", "Level", "Tracking PRF", "Status PRF"],
               baris, align="llrllllll")
         st.markdown(theme.inline_note(
-            "Kolom <b>Request Number</b> memakai ID PRF kalau nomor requestnya belum "
-            "terbit — satu kolom identitas, bukan dua kolom yang separuhnya kosong.",
+            "<b>Request Number</b> falls back to the PRF ID when the request number "
+            "has not been issued yet — one identity column instead of two "
+            "half-empty ones.",
             block=True), unsafe_allow_html=True)
 
 
 # ===========================================================================
 # ⑥ SUMMARY BY DIVISION
 # ===========================================================================
-@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Mengambil MPP & headcount…")
+@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Loading MPP & headcount…")
 def get_mpp_actual():
-    """(reforecast, headcount aktif). Keduanya dari spreadsheet yang berbeda.
+    """(reforecast, headcount aktif, ADP) — tiga tab di spreadsheet Report.
 
-    Reforecast = rencana; headcount = isi organisasi hari ini. Kalau salah satu
-    gagal diambil, halaman menjelaskan keadaannya alih-alih menampilkan Gap yang
-    dihitung dari angka setengah.
+    Sejak 8 Sep 2026 ketiganya diambil dari tab yang persis sama dengan yang
+    dipakai rumus di sheet "Copy of Summary by Division": MPP2, Existing
+    Employee, dan ADP. Sebelumnya MPP diambil dari spreadsheet lain dan divisi
+    karyawan ditebak dari huruf pertama Position Code — dua sumber berbeda untuk
+    satu angka yang sama adalah cara paling pasti membuat portal dan sheet
+    berselisih.
+
+    Kalau salah satu gagal diambil, halaman menjelaskan keadaannya alih-alih
+    menampilkan Gap yang dihitung dari angka setengah.
     """
-    ref = M.prepare_reforecast(DL.load_mpp_reforecast())
-    hc = M.prepare_headcount(DL.load_mpp(), DL.load_division_code())
-    return ref, hc
+    ref = M.prepare_reforecast(DL.load_mpp2())
+    hc = M.prepare_headcount(DL.load_existing_employee())
+    try:
+        adp = M.prepare_adp(DL.load_adp())
+    except Exception:  # noqa: BLE001
+        # ADP hanya menambah satu kolom; kalau tabnya bermasalah, halaman tetap
+        # berguna tanpa kolom itu.
+        adp = None
+    return ref, hc, adp
 
 
 def _cand_divisi(df):
@@ -1085,7 +1132,7 @@ def _baris_angka(r, kolom_mpp=True):
         # stat_inline meng-escape isinya, jadi angkanya ditulis polos. Warnanya
         # sudah disampaikan batang sebaran dan tabel level di bawah.
         isi += [("Gap", f'{int(r["gap"]):+d}')]
-    isi += [("Diproses", n(r["ongoing"])), ("Onboarding", n(r["hired"]))]
+    isi += [("Diproses", n(r["ongoing"])), ("Onboarded", n(r["hired"]))]
     return theme.stat_inline(isi)
 
 
@@ -1101,17 +1148,17 @@ def _detail_level(kunci, dfc, lt, sf, est, divisi, nama_level, site):
         c = c[c["site"] == site]
     if c.empty:
         st.markdown(theme.inline_note(
-            "Belum ada kandidat yang tercatat di level ini — kolom MPP dan Actual "
-            "di atas datang dari sheet MPP dan daftar karyawan, bukan dari "
-            "pipeline rekrutmen.", block=True), unsafe_allow_html=True)
+            "No candidate recorded at this level — the MPP and Actual columns above "
+            "come from the MPP sheet and the employee list, not from the "
+            "recruitment pipeline.", block=True), unsafe_allow_html=True)
         return
 
     pos = (c.groupby(["position_name", "loc"], dropna=False)
              .apply(lambda g: pd.Series(M._ringkas(g)), include_groups=False)
              .reset_index().sort_values(["ongoing", "kandidat"], ascending=False))
-    tabel(f"{kunci}_pos", f"Posisi — {divisi}", nama_level,
-          ["Posisi", "Site", "Kandidat", "Diproses", "Onboarding",
-           "Backup candidate", "Gagal"],
+    tabel(f"{kunci}_pos", f"Positions — {divisi}", nama_level,
+          ["Position", "Site", "Candidates", "In process", "Onboarded",
+           "Backup", "Failed"],
           [[theme.esc(r.position_name), theme.esc(r.loc), n(r.kandidat),
             n(r.ongoing), n(r.hired), n(r.pool), n(r.gagal)]
            for r in pos.itertuples()], align="llrrrrr")
@@ -1123,8 +1170,8 @@ def _detail_level(kunci, dfc, lt, sf, est, divisi, nama_level, site):
     jalan = jalan.merge(lt[["cand_key", "budget_total"]], on="cand_key", how="left")
     jalan["sla"] = jalan["cand_key"].map(M.sla_per_candidate(sf))
     jalan["est"] = jalan["cand_key"].map(est)
-    tabel(f"{kunci}_kand", f"Sedang diproses — {divisi}", nama_level,
-          ["Kandidat", "Posisi", "Site", "Tahap terakhir", "SLA / target",
+    tabel(f"{kunci}_kand", f"In process — {divisi}", nama_level,
+          ["Candidate", "Position", "Site", "Last stage", "SLA / target",
            "Estimate Onboarding"],
           [[theme.esc(r.candidate_id), theme.esc(r.position_name), theme.esc(r.loc),
             theme.esc(r.last_progress),
@@ -1137,16 +1184,17 @@ def _detail_level(kunci, dfc, lt, sf, est, divisi, nama_level, site):
 # ringkas (divisi) dan tabel detail (level) dijamin memakai kolom yang sama —
 # itu inti dari grouping ala Excel: barisnya bertingkat, kolomnya satu.
 KOLOM_DIVISI = [
-    {"label": "Divisi / Level", "align": "l"},
+    {"label": "Division / Level", "align": "l"},
     {"label": "MPP", "align": "r"},
     {"label": "Actual", "align": "r"},
     {"label": "Gap", "align": "r"},
+    {"label": "ADP", "align": "r"},
     {"label": "Need to hire", "align": "r"},
-    {"label": "Kandidat", "align": "r", "sep": True},
-    {"label": "Diproses", "align": "r"},
-    {"label": "Onboarding", "align": "r"},
+    {"label": "Candidates", "align": "r", "sep": True},
+    {"label": "In process", "align": "r"},
+    {"label": "Onboarded", "align": "r"},
     {"label": "Backup", "align": "r"},
-    {"label": "Gagal", "align": "r"},
+    {"label": "Failed", "align": "r"},
     {"label": "Interview User", "align": "r", "sep": True,
      "sub": ["On prog", "Passed", "Failed"]},
     {"label": "Psychotest", "align": "r", "sep": True,
@@ -1158,8 +1206,8 @@ KOLOM_DIVISI = [
 ]
 # Judul datar untuk unduhan Excel/PNG: header dua tingkat tidak punya padanan
 # di file, jadi nama grupnya ditempelkan ke tiap anaknya.
-HEAD_DIVISI = ["Divisi / Level", "MPP", "Actual", "Gap", "Need to hire",
-               "Kandidat", "Diproses", "Onboarding", "Backup", "Gagal"] + [
+HEAD_DIVISI = ["Division / Level", "MPP", "Actual", "Gap", "ADP", "Need to hire",
+               "Candidates", "In process", "Onboarded", "Backup", "Failed"] + [
     f"{t} — {k}" for t in ("Interview User", "Psychotest", "Offering", "MCU")
     for k in ("On prog", "Passed", "Failed")]
 ALIGN_DIVISI = "l" + "r" * (len(HEAD_DIVISI) - 1)
@@ -1172,8 +1220,16 @@ def _gap_sel(v):
     return f'<span style="color:{warna};font-weight:700">{v:+d}</span>'
 
 
+def _nol_abu(v):
+    """Angka nol ditulis abu supaya mata langsung lompat ke yang ada isinya."""
+    v = int(v)
+    if not v:
+        return f'<span style="color:{theme.NEUTRAL["text_soft"]}">0</span>'
+    return n(v)
+
+
 def _proc_sel(pb, kunci, slug, jenis):
-    """Satu sel proses. Nol ditulis abu supaya mata langsung lompat ke yang isi."""
+    """Satu sel proses, diwarnai menurut artinya."""
     v = 0
     if pb is not None and kunci in pb.index:
         v = int(pb.loc[kunci, f"{slug}_{jenis}"])
@@ -1186,10 +1242,9 @@ def _proc_sel(pb, kunci, slug, jenis):
 
 def _baris_divisi(nama, r, pb, kunci):
     """Satu baris tabel — dipakai baris divisi maupun baris level di bawahnya."""
-    perlu = max(int(r["mpp"]) - int(r["actual"]), 0)
+    perlu = int(r.get("need", max(int(r["mpp"]) - int(r["actual"]), 0)))
     sel = [nama, n(r["mpp"]), n(r["actual"]), _gap_sel(r["gap"]),
-           n(perlu) if perlu else
-           f'<span style="color:{theme.NEUTRAL["text_soft"]}">0</span>',
+           _nol_abu(r.get("adp", 0)), _nol_abu(perlu),
            n(r["kandidat"]), n(r["ongoing"]), n(r["hired"]), n(r["pool"]),
            n(r["gagal"])]
     for tahap, slug in M.PROCESS_SLUG.items():
@@ -1203,11 +1258,21 @@ def _baris_polos(sel):
     return [re.sub(r"<[^>]+>", "", str(v)) for v in sel]
 
 
+def _awal_bulan():
+    """Tanggal 1 bulan berjalan — nilai awal filter Summary by Division."""
+    return pd.Timestamp.today().normalize().replace(day=1).date()
+
+
 @st.cache_data(show_spinner=False, ttl=C.CACHE_TTL_SECONDS)
-def _rekap_divisi(_ref, _hc, _dfc, _sf, _df, site):
+def _rekap_divisi(_ref, _hc, _adp, _dfc, _sf, _df, site, mulai, akhir):
     """Semua yang dibutuhkan tabel: ringkasan divisi, level tiap divisi, dan
-    sebaran prosesnya. Dihitung sekali, bukan per baris."""
-    div = M.division_summary(_ref, _hc, _dfc, site=site)
+    sebaran prosesnya. Dihitung sekali, bukan per baris.
+
+    `mulai`/`akhir` hanya menyaring KANDIDAT. MPP, Actual, dan ADP adalah potret
+    keadaan hari ini, bukan kejadian dalam rentang waktu — menyaringnya dengan
+    tanggal akan menghasilkan angka yang tidak berarti apa-apa.
+    """
+    div = M.division_summary(_ref, _hc, _dfc, site=site, adp=_adp)
     c = _dfc if not site else _dfc[_dfc["site"] == site]
 
     satu = c.drop_duplicates("cand_key")
@@ -1220,7 +1285,8 @@ def _rekap_divisi(_ref, _hc, _dfc, _sf, _df, site):
         _sf, _df, pd.Series(kunci_lvl.values, index=satu["cand_key"]))
     pb_lvl = pb_lvl.set_index("_grup") if len(pb_lvl) else None
 
-    level = {r.divisi: M.level_summary(_ref, _hc, _dfc, r.divisi, site=site)
+    level = {r.divisi: M.level_summary(_ref, _hc, _dfc, r.divisi, site=site,
+                                       adp=_adp)
              for r in div.itertuples()}
     return div, level, pb_div, pb_lvl
 
@@ -1230,11 +1296,8 @@ def page_division():
 
     Bentuknya sengaja meniru grouping Excel yang sudah dipakai tim: klik [+] di
     depan nama divisi, baris levelnya muncul tepat di bawahnya, dalam kolom yang
-    sama persis. Sebelumnya tiap divisi adalah satu expander Streamlit — itu
-    membuat dua puluh divisi jadi dua puluh kotak yang tidak bisa dibandingkan
-    satu sama lain, dan tiap klik memaksa halaman menghitung ulang MPP, daftar
-    karyawan, dan pipeline. Di sini buka-tutupnya murni CSS: tidak ada rerun,
-    dan semua divisi berdiri di kolom yang sama sehingga bisa dibaca menurun.
+    sama persis. Buka-tutupnya murni CSS: tidak ada rerun, dan semua divisi
+    berdiri di kolom yang sama sehingga bisa dibaca menurun.
 
     Kolom prosesnya (Interview User, Psychotest, Offering, MCU — masing-masing
     On progress / Passed / Failed) sengaja ditaruh di sebelah kanan: yang paling
@@ -1243,13 +1306,10 @@ def page_division():
     """
     df, sf, lt = data_or_stop()
     try:
-        ref, hc = get_mpp_actual()
+        ref, hc, adp = get_mpp_actual()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"MPP atau daftar karyawan tidak bisa diambil.\n\n{exc}")
+        st.error(f"MPP or the employee list could not be loaded.\n\n{exc}")
         st.stop()
-
-    dfc = _cand_divisi(df)
-    est = _estimasi_semua(sf, df)
 
     situs = ["All"] + [s for s in ["BCP", "KCP", "ACP", "SSCP", "JKT", "BPN"]
                        if (ref["site"] == s).any() or (hc["site"] == s).any()]
@@ -1258,27 +1318,55 @@ def page_division():
                                      label_visibility="collapsed")
     site = None if (pilih or "All") == "All" else pilih
 
-    div, level, pb_div, pb_lvl = _rekap_divisi(ref, hc, dfc, sf, df, site)
+    hari_ini = pd.Timestamp.today().normalize().date()
+    mulai, akhir = filterbar("sd_f", [
+        {"label": "Active from", "key": "sd_dari",
+         "kind": "date", "value": _awal_bulan(),
+         "help": "A candidate counts as active in the period when their own "
+                 "activity window overlaps it — first stage date to last stage "
+                 "date, or to today while still running. Filters the candidate "
+                 "columns only: MPP, Actual and ADP are today's snapshot."},
+        {"label": "Active to", "key": "sd_sampai", "kind": "date",
+         "value": hari_ini},
+    ])
+    if isinstance(mulai, (list, tuple)):
+        mulai = mulai[0] if mulai else None
+    if isinstance(akhir, (list, tuple)):
+        akhir = akhir[0] if akhir else None
+    if mulai and akhir and mulai > akhir:
+        mulai, akhir = akhir, mulai
+
+    dsaring = M.filter_date_range(df, sf, mulai, akhir)
+    dfc = _cand_divisi(dsaring)
+    est = _estimasi_semua(sf, df)
+    periode = (f"{pd.Timestamp(mulai):%d %b %Y} – {pd.Timestamp(akhir):%d %b %Y}"
+               if mulai and akhir else "all periods")
+
+    div, level, pb_div, pb_lvl = _rekap_divisi(
+        ref, hc, adp, dfc, sf, dsaring, site, mulai, akhir)
     if div.empty:
-        st.markdown(theme.empty_state("Belum ada data", "—"), unsafe_allow_html=True)
+        st.markdown(theme.empty_state("No data yet", "—"), unsafe_allow_html=True)
         return
 
-    judul = "Seluruh site" if site is None else site
+    judul = "All sites" if site is None else site
     st.markdown(theme.section_heading(
-        1, judul, f"{len(div)} divisi · MPP dibanding isi organisasi hari ini"),
-        unsafe_allow_html=True)
+        1, judul, f"{len(div)} divisions · MPP vs. headcount today · "
+                  f"candidates active {periode}"), unsafe_allow_html=True)
 
     total = {k: int(div[k].sum()) for k in
-             ("mpp", "actual", "gap", "kandidat", "ongoing", "hired", "pool", "gagal")}
+             ("mpp", "actual", "gap", "adp", "need", "kandidat", "ongoing",
+              "hired", "pool", "gagal")}
     k = st.columns(5, gap="small")
     kartu = [
-        ("MPP", total["mpp"], "rencana headcount", "📋", theme.BRAND["navy"]),
-        ("Actual", total["actual"], "karyawan aktif", "👥", theme.BRAND["orange"]),
+        ("MPP", total["mpp"], "planned headcount", "📋", theme.BRAND["navy"]),
+        ("Actual", total["actual"], "active employees", "👥", theme.BRAND["orange"]),
         ("Gap", f'{total["gap"]:+d}', "actual − MPP", "⚖️",
          theme.STATUS["bad"] if total["gap"] < 0 else theme.STATUS["good"]),
-        ("Sedang diproses", total["ongoing"], "kandidat berjalan", "⏳",
+        ("Need to hire", total["need"],
+         f'shortfalls only, {n(total["adp"])} ADP deducted', "🎯",
          theme.STATUS["warn"]),
-        ("Onboarding", total["hired"], "sudah masuk kerja", "✅", theme.STATUS["good"]),
+        ("In process", total["ongoing"], f"active {periode}", "⏳",
+         theme.STATUS["warn"]),
     ]
     for col, (lab, val, sub, emo, warna) in zip(k, kartu):
         with col:
@@ -1287,7 +1375,7 @@ def page_division():
                         unsafe_allow_html=True)
 
     st.markdown(theme.section_heading(
-        2, "Tabel divisi", "klik [+] untuk membuka levelnya — seperti grouping di Excel"),
+        2, "Division table", "click [+] to open the levels — like grouping in Excel"),
         unsafe_allow_html=True)
 
     baris, unduh = [], []
@@ -1315,51 +1403,54 @@ def page_division():
         return int(pb_div[f"{slug}_{jenis}"].sum())
 
     total_sel = ["TOTAL", n(total["mpp"]), n(total["actual"]),
-                 f'{total["gap"]:+d}',
-                 n(max(total["mpp"] - total["actual"], 0)),
+                 f'{total["gap"]:+d}', n(total["adp"]), n(total["need"]),
                  n(total["kandidat"]), n(total["ongoing"]), n(total["hired"]),
                  n(total["pool"]), n(total["gagal"])] + [
         n(jum(sl, jn)) for sl in M.PROCESS_SLUG.values() for jn in M.PROCESS_KINDS]
 
     unduh_saja("sd_tabel", f"Summary by Division — {judul}",
-               f"{len(div)} divisi · {pd.Timestamp.today():%d %b %Y}",
+               f"{len(div)} divisions · {periode}",
                HEAD_DIVISI, unduh, align=ALIGN_DIVISI,
                total_row=_baris_polos(total_sel))
     st.markdown(theme.group_table(
         "sd", KOLOM_DIVISI, baris, tinggi=560,
-        petunjuk=f"{len(div)} divisi · [+] membuka rincian per level",
+        petunjuk=f"{len(div)} divisions · [+] opens the level breakdown",
         total=total_sel), unsafe_allow_html=True)
 
     st.markdown(theme.inline_note(
-        "<b>MPP</b> dan <b>Actual</b> datang dari sheet MPP Reforecast dan daftar "
-        "karyawan aktif, <b>bukan</b> dari pipeline rekrutmen — jadi Gap menjawab "
-        "\"kurang berapa orang\", sementara kolom Kandidat sampai MCU menjawab "
-        "\"sedang diisi sampai mana\". <b>Need to hire</b> adalah kekurangan yang "
-        "masih positif (MPP − Actual). Kolom proses dihitung per orang: satu "
-        "kandidat dihitung sekali di tiap tahap, dan tahap yang belum dia jalani "
-        "tidak dihitung sama sekali.", block=True), unsafe_allow_html=True)
+        "<b>MPP</b> comes from the <i>MPP2</i> tab and <b>Actual</b> from "
+        "<i>Existing Employee</i> — the same tabs the team's own "
+        "<i>Summary by Division</i> sheet uses. <b>ADP</b> counts people already "
+        "acting in the role, so <b>Need to hire</b> = MPP − Actual − ADP (never "
+        "below zero). <b>FTAP</b> is shown as its own division: those employees "
+        "sit under Human Capital Management in the employee list, which made HCM "
+        "look far larger than it is; their MPP is set equal to Actual because the "
+        "program has no headcount plan of its own. A candidate counts in the period "
+        f"({periode}) when their own activity window overlaps it, so someone who "
+        "entered in June and is still at MCU today is still counted; MPP, Actual "
+        "and ADP are today's snapshot, not the period's.", block=True), unsafe_allow_html=True)
 
     # ── Tingkat ketiga: posisi dan orangnya. Tidak dijadikan baris tabel karena
     # isinya bukan angka melainkan daftar nama, dan daftar nama di dalam kolom
     # angka tidak terbaca. Dipilih lewat dua dropdown supaya tetap dua klik.
     st.markdown(theme.section_heading(
-        3, "Buka sampai orangnya", "pilih divisi lalu levelnya"),
+        3, "Drill down to people", "pick a division, then a level"),
         unsafe_allow_html=True)
 
     punya = [r.divisi for r in div.itertuples() if r.kandidat]
     if not punya:
         st.markdown(theme.inline_note(
-            "Belum ada kandidat di site ini, jadi tidak ada detail proses yang "
-            "bisa dibuka.", block=True), unsafe_allow_html=True)
+            "No candidates active in this site and period, so there is nothing to open.",
+            block=True), unsafe_allow_html=True)
         return
 
     with st.container(key="filterbar_sd_drill"):
         c1, c2 = st.columns(2, gap="small")
         with c1:
-            dpil = st.selectbox("Divisi", punya, key="sd_dv",
+            dpil = st.selectbox("Division", punya, key="sd_dv",
                                 filter_mode="contains")
         lvl = level.get(dpil)
-        opsi = [f"{x.level} ({x.kandidat} kandidat)"
+        opsi = [f"{x.level} ({x.kandidat} candidates)"
                 for x in lvl.itertuples() if x.kandidat] if lvl is not None else []
         with c2:
             lpil = st.selectbox("Level", ["—"] + opsi, key="sd_lv")
@@ -1389,29 +1480,29 @@ def _panel_monitoring(df, sf, lt):
     bulan_ada = M.month_options(df, sf)
     (bulan_p, site_p, pic_p, dep_p,
      status_p, lvl_p, jenis_p, tahap_p) = filterbar("rr", [
-        [{"label": "Bulan (tanggal Screening CV)", "key": "rr_bulan_f", "kind": "multi",
+        [{"label": "Month (CV Screening date)", "key": "rr_bulan_f", "kind": "multi",
           "options": bulan_ada, "default": [], "width": 2,
-          "placeholder": "Semua bulan"},
+          "placeholder": "All months"},
          {"label": "Site", "key": "rr_site_f", "kind": "multi",
-          "options": list(C.SITES), "default": [], "placeholder": "Semua site"},
+          "options": list(C.SITES), "default": [], "placeholder": "All sites"},
          {"label": "PIC (Screening CV)", "key": "rr_pic_f", "kind": "multi",
-          "options": pic_ada, "default": [], "placeholder": "Semua PIC"}],
-        [{"label": "Departemen", "key": "rr_dep_f", "kind": "multi",
-          "options": dep_ada, "default": [], "placeholder": "Semua departemen",
+          "options": pic_ada, "default": [], "placeholder": "All recruiters"}],
+        [{"label": "Department", "key": "rr_dep_f", "kind": "multi",
+          "options": dep_ada, "default": [], "placeholder": "All departments",
           "width": 2},
          {"label": "Status", "key": "rr_status_f", "kind": "multi",
-          "options": status_ada, "default": [], "placeholder": "Semua status"},
+          "options": status_ada, "default": [], "placeholder": "All statuses"},
          {"label": "Level", "key": "rr_level_f", "kind": "multi",
-          "options": lvl_ada, "default": [], "placeholder": "Semua level"},
-         {"label": "Jenis level", "key": "rr_jenis_f", "kind": "multi",
+          "options": lvl_ada, "default": [], "placeholder": "All levels"},
+         {"label": "Level type", "key": "rr_jenis_f", "kind": "multi",
           "options": ["Staff", "Non Staff"], "default": [],
           "placeholder": "Staff & Non Staff"}],
-        [{"label": "Tambah kolom tahap", "key": "rr_tahap_f", "kind": "multi",
+        [{"label": "Add stage columns", "key": "rr_tahap_f", "kind": "multi",
           "options": TAHAP_MONITORING, "default": [],
-          "placeholder": "Kolom inti saja — pilih tahap untuk menambah LT dan SLA-nya",
-          "help": "Tiap tahap menambah dua kolom: lead time dan hasil SLA-nya. "
-                  "Kolom variance dan LT contribution sengaja tidak dibawa — "
-                  "keduanya turunan dari angka yang sudah tampil."}],
+          "placeholder": "Core columns only — pick a stage to add its LT and SLA",
+          "help": "Each stage adds two columns: its lead time and its SLA result. "
+                  "Variance and LT contribution are deliberately left out — both "
+                  "are derived from figures already on screen."}],
     ])
 
     d = M.filter_monitoring(
@@ -1421,23 +1512,23 @@ def _panel_monitoring(df, sf, lt):
 
     dipilih = [", ".join(x) for x in
                (bulan_p, site_p, pic_p, dep_p, status_p, lvl_p, jenis_p) if x]
-    label = " · ".join(dipilih) if dipilih else "semua kandidat"
+    label = " · ".join(dipilih) if dipilih else "all candidates"
 
     st.markdown(theme.section_heading(
-        1, "Monitoring kandidat", label), unsafe_allow_html=True)
+        1, "Candidate monitoring", label), unsafe_allow_html=True)
 
     if len(d):
         _kartu_ringkas(M._ringkas(d))
 
-    with theme.card("rr_mon", "Monitoring", f"{n(len(d))} kandidat · {label}"):
+    with theme.card("rr_mon", "Monitoring", f"{n(len(d))} candidates · {label}"):
         if d.empty:
             st.markdown(theme.empty_state(
-                "Tidak ada kandidat", "Tidak ada baris yang cocok dengan filter di atas."),
+                "No candidates", "No row matches the filters above."),
                 unsafe_allow_html=True)
             return d
 
-        inti = ["Kandidat", "Posisi", "Site", "Departemen", "Level", "PIC",
-                "Tahap terakhir", "Status", "SLA"]
+        inti = ["Candidate", "Position", "Site", "Department", "Level", "PIC",
+                "Last stage", "Status", "SLA"]
         kol_tahap = []
         for t in tahap_p:
             kol_tahap += [f"{t} · LT", f"{t} · SLA"]
@@ -1463,11 +1554,12 @@ def _panel_monitoring(df, sf, lt):
                 ]
             baris.append(inti_baris)
 
-        tabel("rr_mon", "Monitoring kandidat", label, headers, baris, align=align)
+        tabel("rr_mon", "Candidate monitoring", label, headers, baris, align=align)
         st.markdown(theme.inline_note(
-            "Tiap tahap yang ditambahkan lewat filter membawa <b>LT</b> dan <b>SLA</b> "
-            "saja. <b>PIC</b> diambil dari PIC Screening CV — dasar yang sama dengan "
-            "tabel Performance, jadi angkanya bisa dibandingkan langsung.",
+            "Each stage added through the filter brings only its <b>LT</b> and "
+            "<b>SLA</b>. <b>PIC</b> comes from the CV Screening PIC — the same basis "
+            "as "
+            "the Recruiter performance table, so the two can be compared directly.",
             block=True), unsafe_allow_html=True)
     return d
 
@@ -1484,28 +1576,28 @@ def _panel_talent_pool(df, d):
     tp = tp[tp["cand_key"].isin(kunci)]
 
     st.markdown(theme.section_heading(
-        2, "Backup candidate", "lolos seleksi, belum ditempatkan"), unsafe_allow_html=True)
+        2, "Backup candidate", "passed selection, not yet placed"), unsafe_allow_html=True)
     with theme.card("rr_tp", "Backup candidate",
-                    f"{len(tp)} orang · mengikuti filter di atas"):
+                    f"{len(tp)} people · follows the filters above"):
         if tp.empty:
             st.markdown(theme.empty_state(
-                "Tidak ada backup candidate",
-                "Kandidat masuk daftar ini begitu salah satu tahapnya diberi hasil "
-                "<b>TALENT POOL</b> di form. Longgarkan filter di atas kalau "
-                "daftarnya kosong padahal seharusnya ada."), unsafe_allow_html=True)
+                "No backup candidate",
+                "A candidate joins this list as soon as any stage is marked "
+                "<b>TALENT POOL</b> on the form. Loosen the filters above if "
+                "the list is empty when it should not be."), unsafe_allow_html=True)
             return
-        tabel("rr_tp", "Backup candidate", f"{len(tp)} orang",
-              ["Kandidat", "No HP", "Posisi dilamar", "Departemen", "Site",
-               "Level", "Masuk backup di tahap"],
+        tabel("rr_tp", "Backup candidate", f"{len(tp)} people",
+              ["Candidate", "Phone", "Position applied for", "Department", "Site",
+               "Level", "Moved to backup at"],
               [[theme.esc(r.candidate_id), theme.esc(r.phone or "—"),
                 theme.esc(r.position_name), theme.esc(r.departement),
                 theme.esc(r.loc), theme.esc(r.level), theme.esc(r.stage)]
                for r in tp.itertuples()], align="lllllll")
         st.markdown(theme.inline_note(
-            "Site, level, dan tahap ikut ditampilkan karena itu yang menentukan siapa "
-            "yang menghubungi, posisi apa yang pantas ditawarkan, dan berapa banyak "
-            "seleksi yang tidak perlu diulang. Nomor HP diambil dari sheet Backend "
-            "Monitoring — fix_centralized tidak punya kolomnya.",
+            "Site, level and stage are shown because they decide who makes the call, "
+            "what role is worth offering, and how much of the selection does not "
+            "have to be repeated. Phone numbers come from the Backend Monitoring "
+            "sheet — fix_centralized does not carry that column.",
             block=True), unsafe_allow_html=True)
 
 
@@ -1522,7 +1614,7 @@ def _panel_link():
         with theme.card(f"rr_link_{site}", f'{cfg["icon"]}  {cfg["label"]}', note):
             if not url and not sheet:
                 st.markdown(theme.inline_note(
-                    "Belum ada link untuk site ini. Tempel URL-nya di "
+                    "No link for this site yet. Paste the URL into "
                     "<code>FORM_URLS</code> dan <code>SHEET_URLS</code> pada "
                     "<code>config.py</code>.", block=True), unsafe_allow_html=True)
                 continue
@@ -1560,9 +1652,9 @@ def page_rec_room():
 # ===========================================================================
 def page_todo(title: str, isi: list[str], fase: str):
     st.markdown(theme.section_heading(1, title, f"dijadwalkan {fase}"), unsafe_allow_html=True)
-    with theme.card("todo", title, "belum dibangun"):
+    with theme.card("todo", title, "not built yet"):
         st.markdown(theme.empty_state(
-            "Halaman ini belum ada isinya",
+            "This page has no content yet",
             "Yang akan masuk ke sini:<br>• " + "<br>• ".join(theme.esc(i) for i in isi),
             emoji="🚧",
         ), unsafe_allow_html=True)
@@ -1581,16 +1673,16 @@ def main():
         st.session_state.page = "overview"
 
     titles = {
-        "overview": ("Overview", "Ringkasan pipeline dan dashboard Looker"),
-        "weekly": ("Weekly Report", "Performance recruiter, New Hire, ringkasan site, On Progress, resign"),
-        "tracking_candidate": ("Tracking Kandidat", "Proses seleksi per kandidat, tahap demi tahap"),
-        "tracking_position": ("Tracking Posisi",
-                              "Per posisi, atau telusuri per departemen"),
-        "prf": ("PRF Tracking", "Pengajuan posisi: approval, status, dan sebarannya"),
+        "overview": ("Overview", "Pipeline summary and the Looker dashboard"),
+        "weekly": ("Weekly Report", "Recruiter performance, new hires, site summary, in progress, resignations"),
+        "tracking_candidate": ("Candidate Tracking", "One candidate at a time, stage by stage"),
+        "tracking_position": ("Position Tracking",
+                              "By position, or drill down by department"),
+        "prf": ("PRF Tracking", "Position requests: approval, status and how they spread"),
         "division": ("Summary by Division",
-                     "MPP vs isi organisasi vs pipeline — telusuri sampai ke orangnya"),
+                     "MPP vs. headcount vs. pipeline — drill down to the people"),
         "rec_room": ("Recruitment Room",
-                     "Monitoring kandidat, plus link form & spreadsheet per site"),
+                     "Candidate monitoring, plus the form and spreadsheet link per site"),
     }
     title, subtitle = titles[st.session_state.page]
     shell(title, subtitle)
