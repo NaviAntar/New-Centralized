@@ -1542,86 +1542,11 @@ def page_division():
         petunjuk=f"{len(div)} divisions · [+] opens the level breakdown",
         total=total_sel), unsafe_allow_html=True)
 
-    st.markdown(theme.inline_note(
-        "<b>MPP</b> comes from the <i>MPP2</i> tab and <b>Actual</b> from "
-        "<i>Existing Employee</i> — the same tabs the team's own "
-        "<i>Summary by Division</i> sheet uses. <b>ADP</b> counts people already "
-        "acting in the role, so <b>Need to hire</b> = MPP − Actual − ADP, never below "
-        "zero — the same arithmetic as the team\u2019s own sheet, with the sign "
-        "flipped so the number reads as \"hire this many more\". <b>FTAP</b> is "
-        "informational: how many of that Actual are Future Talent Acceleration "
-        "Program participants. It no longer moves Need to hire, because each one "
-        "now carries their own budget in MPP2. The "
-        "four process groups read the <b>Result</b> columns of the monitoring "
-        "tab — the very tab the team\u2019s own sheet reads — so source and "
-        "formula are both identical: <b>On progress</b> and <b>Passed</b> count "
-        "only candidates whose process is still live (the <b>Process status</b> "
-        "filter, <i>In process</i> by default). In that mode the process groups "
-        "<b>ignore the period filter</b> — \"where is everyone right now\" has no "
-        "period — and <b>Failed</b> is bounded by the chain: whatever a stage "
-        "holds (on progress + passed + failed) can never exceed how many passed "
-        "the stage before it, so Failed fills exactly the people who passed but "
-        "have not been recorded here yet, counted over the last two months. If "
-        "the stage already holds everyone, Failed is zero. Interview User has no "
-        "stage before it, so its Failed is the plain two-month count. Pick any "
-        "other status and the chain bound is lifted. MCU reads the FU MCU "
-        "result, which is where FIT TO WORK is recorded. <b>FTAP</b> positions "
-        "are counted into the division their name points at, and appear as their "
-        "own level rows. A candidate counts in the period "
-        f"({periode}) when their own activity window overlaps it, so someone who "
-        "entered in June and is still at MCU today is still counted; MPP, Actual "
-        "and ADP are today's snapshot, not the period's.", block=True), unsafe_allow_html=True)
-
-    # ── Cek rantai antar tahap. Inilah aturan yang dipatok tim: yang lulus di
-    # satu tahap HARUS sudah tercatat di tahap berikutnya. Sheet menuliskannya
-    # di dalam rumus kolom Failed; di sini dikeluarkan jadi panel tersendiri,
-    # karena kalau angkanya tidak nol yang dibutuhkan bukan angka Failed
-    # melainkan tahu persis di mana pencatatannya bolong.
-    stat_kode = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in status_p]
-    berjalan = set(stat_kode or M.STATUS_BERJALAN) == set(M.STATUS_BERJALAN)
-    rantai = M.process_chain_monitoring(bm, site=site, statuses=stat_kode)
-    if rantai:
-        st.markdown(theme.section_heading(
-            3, "Pipeline consistency",
-            "everyone who passed a stage must already be recorded at the next one"),
-            unsafe_allow_html=True)
-        jendela = ("all periods · in process" if berjalan
-                   else f"{periode} · follows the filters above")
-        with theme.card("sd_rantai", "Stage-to-stage check", jendela):
-            baris_r = []
-            for x in rantai:
-                sel = int(x["selisih"])
-                if sel == 0:
-                    nilai = (f'<span style="color:{theme.STATUS["good"]};'
-                             'font-weight:700">0 — matched</span>')
-                else:
-                    nilai = (f'<span style="color:{theme.STATUS["bad"]};'
-                             f'font-weight:700">{sel:+d}</span>')
-                baris_r.append([
-                    f'{theme.esc(x["dari"])} <b>passed</b>', n(x["lulus"]),
-                    f'{theme.esc(x["ke"])} <b>on progress + passed</b>',
-                    n(x["tercatat"]), nilai])
-            tabel("sd_rantai", "Pipeline consistency", jendela,
-                  ["Passed at", "People", "Should appear at", "Recorded", "Gap"],
-                  baris_r, align="lrlrr", max_rows=None)
-            st.markdown(theme.inline_note(
-                "A gap of <b>0</b> means nobody fell out of monitoring between "
-                "those two stages. A <b>positive</b> gap means that many people "
-                "passed the earlier stage but have no result recorded at the "
-                "next one yet — they are not failures, their row simply has not "
-                "been filled in. A <b>negative</b> gap means the later stage has "
-                "more people than the earlier one passed, which usually means a "
-                "result was entered out of order. This check covers every "
-                "candidate, including those whose department is not mapped — so "
-                "it can show a gap even when every division row already "
-                "balances.",
-                block=True), unsafe_allow_html=True)
-
     # ── Tingkat ketiga: posisi dan orangnya. Tidak dijadikan baris tabel karena
     # isinya bukan angka melainkan daftar nama, dan daftar nama di dalam kolom
     # angka tidak terbaca. Dipilih lewat dua dropdown supaya tetap dua klik.
     st.markdown(theme.section_heading(
-        4, "Drill down to people", "pick a division, then a level"),
+        3, "Drill down to people", "pick a division, then a level"),
         unsafe_allow_html=True)
 
     punya = [r.divisi for r in div.itertuples() if r.kandidat]
