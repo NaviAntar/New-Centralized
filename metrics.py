@@ -2194,6 +2194,88 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
     return out.reset_index().rename(columns={"index": "_grup"})
 
 
+def process_from_monitoring(bm: pd.DataFrame, site: str | None = None,
+                            statuses=None) -> pd.DataFrame:
+    """Kolom proses dari tab monitoring — sumber yang sama dengan sheet.
+
+    Dipakai KHUSUS halaman Summary by Division (arahan Navi, 11 Sep 2026:
+    *"ambil data sourcenya dari sini aja… kalau sourcenya sudah sama maka
+    dengan rumus yang sama hasilnya sama kan?"*). Halaman lain tetap membaca
+    fix_centralized, yang punya peta tahap portal secara lengkap.
+
+    Rumusnya sama persis dengan process_breakdown():
+      - On Progress / Passed  : kolom Result, disaring status (bawaan OPEN)
+      - Failed                : kolom Result, jendela dua bulan terakhir pada
+                                tanggal MULAI tahap, status diabaikan
+      - lalu dibatasi rantai   : isi sebuah tahap tidak boleh melebihi yang
+                                lulus di tahap sebelumnya
+
+    Hasilnya ber-index `divisi ▸ level` — butiran paling halus yang ditampilkan
+    tabel, supaya angka divisinya bisa diturunkan dengan menjumlahkan barisnya
+    dan hierarkinya dijamin konsisten.
+    """
+    kolom = [f"{sl}_{k}" for sl in PROCESS_SLUG.values() for k in PROCESS_KINDS]
+    if bm is None or bm.empty:
+        return pd.DataFrame(columns=kolom)
+
+    d = bm if not site else bm[bm["site"] == site]
+    if d.empty:
+        return pd.DataFrame(columns=kolom)
+
+    mau = {str(x).strip().upper() for x in (statuses or STATUS_BERJALAN)}
+    mode_berjalan = mau == set(STATUS_BERJALAN)
+    mulai, akhir = process_failed_window() if mode_berjalan else (None, None)
+
+    kunci = (d["divisi"].astype(str) + C.LEVEL_SEP + d["level"].astype(str))
+    out = pd.DataFrame(index=sorted(kunci.unique()))
+    hidup = d["status"].isin(mau)
+
+    for tahap, sl in PROCESS_SLUG.items():
+        r = d.get(f"res_{tahap}")
+        if r is None:
+            for k in PROCESS_KINDS:
+                out[f"{sl}_{k}"] = 0
+            continue
+        lulus = r.isin(PROCESS_PASSED[tahap])
+        jalan = r.isin(PROCESS_PROGRESS)
+        gagal = r.isin(PROCESS_FAILED[tahap])
+        if mulai is not None:
+            t = d.get(f"start_{tahap}")
+            if t is not None:
+                gagal = gagal & t.notna() & (t >= pd.Timestamp(mulai)) \
+                        & (t <= pd.Timestamp(akhir))
+        for k, m in (("progress", jalan & hidup), ("passed", lulus & hidup),
+                     ("failed", gagal)):
+            out[f"{sl}_{k}"] = (kunci[m].value_counts()
+                                .reindex(out.index).fillna(0).astype(int))
+
+    if mode_berjalan:
+        # Batas rantai, per baris. Lihat process_breakdown() untuk alasannya.
+        for a, b in PROCESS_CHAIN:
+            sa, sb = PROCESS_SLUG[a], PROCESS_SLUG[b]
+            ruang = (out[f"{sa}_passed"]
+                     - out[f"{sb}_progress"] - out[f"{sb}_passed"]).clip(lower=0)
+            out[f"{sb}_failed"] = out[f"{sb}_failed"].clip(upper=ruang)
+
+    out.index.name = "_grup"
+    return out
+
+
+def process_chain_monitoring(bm: pd.DataFrame, site: str | None = None,
+                             statuses=None) -> list[dict]:
+    """Cek rantai antar tahap, dari sumber monitoring yang sama."""
+    pb = process_from_monitoring(bm, site=site, statuses=statuses)
+    hasil = []
+    for a, b in PROCESS_CHAIN:
+        sa, sb = PROCESS_SLUG[a], PROCESS_SLUG[b]
+        lulus = int(pb[f"{sa}_passed"].sum()) if len(pb) else 0
+        tercatat = (int(pb[f"{sb}_progress"].sum() + pb[f"{sb}_passed"].sum())
+                    if len(pb) else 0)
+        hasil.append({"dari": a, "ke": b, "lulus": lulus,
+                      "tercatat": tercatat, "selisih": lulus - tercatat})
+    return hasil
+
+
 # Rantai yang dicek sheet: yang lulus di satu tahap HARUS muncul di tahap
 # berikutnya. Rumus Failed di sheet menuliskannya secara harfiah —
 # `if(sum(Psychotest OnProg:Passed) = Interview User Passed; 0; …)` — jadi

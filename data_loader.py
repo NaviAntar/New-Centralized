@@ -409,6 +409,78 @@ def load_adp(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
     return out[out["divisi"].notna() & ~out["divisi"].isin(["", "nan", "None"])]
 
 
+# Tahap proses -> (kolom Result, kolom tanggal mulai) di tab monitoring.
+_PROSES_KOLOM = {
+    "Interview User": ("RESULT INTERVIEW USER", "START INTERVIEW USER"),
+    "Psychotest": ("RESULT PSYCHOTEST", "START PSYCHOTEST"),
+    "Offering": ("RESULT OFFERING", "START REQ OFFERING"),
+    "MCU": ("RESULT MCU", "MCU DATE"),
+}
+
+
+def load_process_monitoring(source: str | pd.DataFrame | None = None) -> pd.DataFrame:
+    """Tab monitoring kandidat — sumber kolom proses di Summary by Division.
+
+    Tab yang SAMA dengan yang dibaca rumus sheet "Copy of Summary by Division"
+    (di spreadsheet Report ia muncul sebagai "Backend Monitoring"; isinya cermin
+    satu sama lain). Dipakai khusus untuk empat kolom proses supaya sumber dan
+    rumusnya sama-sama identik dengan sheet — kalau sumbernya sama dan rumusnya
+    sama, hasilnya tidak mungkin berbeda.
+
+    Kembalikan frame rapi: candidate, site, divisi, level, status, lalu untuk
+    tiap tahap `res_<tahap>` dan `start_<tahap>`. Baris tanpa STATUS dibuang —
+    itu baris kosong sisa template, bukan kandidat.
+    """
+    if isinstance(source, pd.DataFrame):
+        df = source.copy()
+    else:
+        kandidat = [("argumen langsung", source or ""),
+                    ("env PROCESS_MONITORING_CSV",
+                     os.environ.get("PROCESS_MONITORING_CSV", "")),
+                    ("export by gid", C.gsheet_gid_url(
+                        C.MONITORING_GID_PROCESS, C.MONITORING_SPREADSHEET_ID)),
+                    ("gviz by nama tab", C.gsheet_csv_url(
+                        C.MONITORING_SHEET_PROCESS, C.MONITORING_SPREADSHEET_ID))]
+        df, _ = _try_sources(
+            kandidat,
+            require=["STATUS", "LOC", "DEPARTMENT", "LEVEL",
+                     "RESULT INTERVIEW USER", "RESULT PSYCHOTEST",
+                     "RESULT OFFERING", "RESULT MCU"])
+
+    df.columns = [str(c).strip() for c in df.columns]
+    # fillna("") WAJIB: kolomnya bertipe string nullable, jadi sel kosong tetap
+    # NA setelah astype(str) — dan NA di dalam masker boolean lolos sebagai True.
+    # Tanpa ini, 1.935 baris kosong sisa template ikut terbaca sebagai kandidat.
+    status = (df["STATUS"].astype("string").str.strip().str.upper()
+              .fillna("").replace("NAN", ""))
+    df = df[status.ne("")]
+    if df.empty:
+        return pd.DataFrame(columns=["candidate", "site", "divisi", "level", "status"])
+
+    nama = df.get("Nama", df.get("CANDIDATE NAME"))
+    out = pd.DataFrame({
+        "candidate": (nama.astype("string").str.strip().fillna("")
+                      if nama is not None else ""),
+        "site": df["LOC"].astype("string").str.strip().str.upper().fillna(""),
+        "divisi": (df["DEPARTMENT"].astype("string").str.strip().fillna("")
+                   .replace({"": C.DEPT_UNMAPPED_LABEL,
+                             "nan": C.DEPT_UNMAPPED_LABEL})
+                   .map(C.merge_division)),
+        "level": df["LEVEL"].map(C.monitoring_level),
+        "status": df["STATUS"].astype(str).str.strip().str.upper(),
+    }, index=df.index)
+
+    for tahap, (kol_res, kol_tgl) in _PROSES_KOLOM.items():
+        out[f"res_{tahap}"] = (
+            df[kol_res].astype("string").str.strip().str.upper()
+            .fillna("").replace("NAN", "")
+            if kol_res in df.columns else "")
+        out[f"start_{tahap}"] = (pd.to_datetime(df[kol_tgl], errors="coerce",
+                                                dayfirst=True)
+                                 if kol_tgl in df.columns else pd.NaT)
+    return out.reset_index(drop=True)
+
+
 def load_division_code(source: str | pd.DataFrame | None = None) -> dict[str, str]:
     """Huruf kode divisi -> nama divisi, dari sheet "Code Divisi".
 

@@ -1125,7 +1125,11 @@ def get_mpp_actual():
         # ADP hanya menambah satu kolom; kalau tabnya bermasalah, halaman tetap
         # berguna tanpa kolom itu.
         adp = None
-    return ref, hc, adp
+    try:
+        bm = DL.load_process_monitoring()
+    except Exception:  # noqa: BLE001
+        bm = None
+    return ref, hc, adp, bm
 
 
 def _cand_divisi(df):
@@ -1225,12 +1229,19 @@ KOLOM_DIVISI = [
 ]
 # Judul datar untuk unduhan Excel/PNG: header dua tingkat tidak punya padanan
 # di file, jadi nama grupnya ditempelkan ke tiap anaknya.
-HEAD_DIVISI = ["Division / Level", "MPP", "Actual", "Gap", "ADP", "FTAP",
+# Judul untuk file unduhan. Divisi dan Level dipisah jadi DUA kolom, tidak
+# ditumpuk seperti di layar: di layar barisnya bertingkat dan jelas mana induk
+# mana anak, tapi di dalam file keduanya berdiri sejajar. Sempat ditandai lekukan
+# spasi, dan Excel membuang lekukannya — siapa pun yang menjumlahkan satu kolom
+# lalu menghitung baris divisi DAN baris levelnya sekaligus, hasilnya dua kali
+# lipat (temuan Navi, 11 Sep 2026). Dengan dua kolom, "baris divisi" = baris yang
+# kolom Level-nya kosong, dan penjumlahannya tidak mungkin salah.
+HEAD_DIVISI = ["Division", "Level", "MPP", "Actual", "Gap", "ADP", "FTAP",
                "Need to hire", "Candidates", "In process", "Onboarded", "Backup",
                "Failed"] + [
     f"{t} — {k}" for t in ("Interview User", "Psychotest", "Offering", "MCU")
     for k in ("On prog", "Passed", "Failed")]
-ALIGN_DIVISI = "l" + "r" * (len(HEAD_DIVISI) - 1)
+ALIGN_DIVISI = "ll" + "r" * (len(HEAD_DIVISI) - 2)
 
 
 def _gap_sel(v):
@@ -1260,13 +1271,30 @@ def _proc_sel(pb, kunci, slug, jenis):
     return f'<span style="color:{warna};font-weight:700">{v}</span>'
 
 
+def _angka0(v):
+    """Nilai angka yang aman: kosong / NaN dibaca nol.
+
+    Baris level yang ditambahkan supaya kolom proses tetap menjumlah bisa datang
+    tanpa angka MPP/Actual sama sekali — dan itu memang benar, mereka nol.
+    """
+    try:
+        if v is None or pd.isna(v):
+            return 0
+        return int(float(v))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _baris_divisi(nama, r, pb, kunci):
     """Satu baris tabel — dipakai baris divisi maupun baris level di bawahnya."""
-    perlu = int(r.get("need", max(int(r["mpp"]) - int(r["actual"]), 0)))
-    sel = [nama, n(r["mpp"]), n(r["actual"]), _gap_sel(r["gap"]),
-           _nol_abu(r.get("adp", 0)), _nol_abu(r.get("ftap", 0)), _nol_abu(perlu),
-           n(r["kandidat"]), n(r["ongoing"]), n(r["hired"]), n(r["pool"]),
-           n(r["gagal"])]
+    mpp, aktual = _angka0(r.get("mpp")), _angka0(r.get("actual"))
+    perlu = _angka0(r.get("need", max(mpp - aktual, 0)))
+    sel = [nama, n(mpp), n(aktual), _gap_sel(_angka0(r.get("gap"))),
+           _nol_abu(_angka0(r.get("adp"))), _nol_abu(_angka0(r.get("ftap"))),
+           _nol_abu(perlu),
+           n(_angka0(r.get("kandidat"))), n(_angka0(r.get("ongoing"))),
+           n(_angka0(r.get("hired"))), n(_angka0(r.get("pool"))),
+           n(_angka0(r.get("gagal")))]
     for tahap, slug in M.PROCESS_SLUG.items():
         for jenis in M.PROCESS_KINDS:
             sel.append(_proc_sel(pb, kunci, slug, jenis))
@@ -1284,7 +1312,7 @@ def _awal_bulan():
 
 
 @st.cache_data(show_spinner=False, ttl=C.CACHE_TTL_SECONDS)
-def _rekap_divisi(_ref, _hc, _adp, _dfc, _dfc_all, _sf, _df, site, mulai, akhir,
+def _rekap_divisi(_ref, _hc, _adp, _bm, _dfc, site, mulai, akhir,
                   status=()):
     """Semua yang dibutuhkan tabel: ringkasan divisi, level tiap divisi, dan
     sebaran prosesnya. Dihitung sekali, bukan per baris.
@@ -1293,34 +1321,77 @@ def _rekap_divisi(_ref, _hc, _adp, _dfc, _dfc_all, _sf, _df, site, mulai, akhir,
     potret keadaan hari ini, bukan kejadian dalam rentang waktu — menyaringnya
     dengan tanggal akan menghasilkan angka yang tidak berarti apa-apa.
 
-    **Kolom proses tidak ikut filter tanggal saat mode "sedang berjalan"**
-    (arahan Navi, 11 Sep 2026). Yang ditanya kolom itu adalah "sekarang orangnya
-    ada di mana", dan itu tidak punya periode; jendela waktunya sudah dipatok di
-    dalam rumusnya sendiri — dua bulan terakhir, khusus kolom Failed. Karena itu
-    ia memakai `_dfc_all`, daftar kandidat yang belum disaring tanggal.
+    **Kolom proses punya sumber dan aturan waktunya sendiri.** Ia dibaca dari
+    tab monitoring (`_bm`) — tab yang sama dengan yang dibaca rumus sheet — dan
+    tidak ikut filter tanggal halaman: yang ditanya kolom itu adalah "sekarang
+    orangnya ada di mana", dan itu tidak punya periode. Jendela waktunya sudah
+    dipatok di dalam rumusnya sendiri: dua bulan terakhir, khusus kolom Failed.
     """
     div = M.division_summary(_ref, _hc, _dfc, site=site, adp=_adp)
 
     stat = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in (status or ())]
-    berjalan = set(stat or M.STATUS_BERJALAN) == set(M.STATUS_BERJALAN)
-    sumber = _dfc_all if berjalan else _dfc
-    c = sumber if not site else sumber[sumber["site"] == site]
 
-    satu = c.drop_duplicates("cand_key")
-    pb_div = M.process_breakdown(_sf, _df, satu.set_index("cand_key")["divisi"],
-                                 statuses=stat, mulai=mulai, akhir=akhir)
-    pb_div = pb_div.set_index("_grup") if len(pb_div) else None
+    # Kolom proses dibaca dari tab MONITORING — sumber yang sama dengan rumus
+    # sheet, bukan fix_centralized (arahan Navi, 11 Sep 2026). Sumber sama +
+    # rumus sama = hasil sama; dan memang begitu hasilnya: rantai antar tahap
+    # menutup persis di setiap divisi.
+    #
+    # Dihitung di butiran PALING HALUS (divisi ▸ level), lalu angka divisinya
+    # DITURUNKAN dengan menjumlahkan barisnya. Batas rantai diterapkan per
+    # baris, jadi kalau divisi dihitung terpisah, batasnya bisa berbeda dari
+    # batas per level dan baris levelnya tidak menjumlah ke barisnya.
+    pb_lvl = M.process_from_monitoring(_bm, site=site, statuses=stat)
+    pb_lvl = pb_lvl if len(pb_lvl) else None
 
-    kunci_lvl = (satu["divisi"].astype(str) + " ▸ "
-                 + satu["level_code"].map(C.level_name).astype(str))
-    pb_lvl = M.process_breakdown(
-        _sf, _df, pd.Series(kunci_lvl.values, index=satu["cand_key"]),
-        statuses=stat, mulai=mulai, akhir=akhir)
-    pb_lvl = pb_lvl.set_index("_grup") if len(pb_lvl) else None
+    if pb_lvl is not None and len(pb_lvl):
+        _d = pb_lvl.copy()
+        _d["_div"] = [str(i).split(C.LEVEL_SEP)[0] for i in _d.index]
+        pb_div = _d.groupby("_div").sum(numeric_only=True)
+        pb_div.index.name = "_grup"
+    else:
+        pb_div = None
 
-    level = {r.divisi: M.level_summary(_ref, _hc, _dfc, r.divisi, site=site,
-                                       adp=_adp)
-             for r in div.itertuples()}
+    # Divisi yang punya kandidat di kolom proses tapi belum punya baris — divisi
+    # yang tidak dikenal MPP maupun daftar karyawan, misalnya kandidat yang
+    # departemennya kosong di sumber. Tanpa baris ini, angkanya tetap ikut di
+    # baris TOTAL sementara tidak ada baris yang memuatnya, dan kolom Passed
+    # Interview User tidak akan pernah menjumlah ke totalnya (temuan Navi,
+    # 11 Sep 2026: TOTAL 88 sementara barisnya hanya berjumlah 73).
+    if pb_div is not None:
+        belum = [g for g in pb_div.index if g not in set(div["divisi"])]
+        if belum:
+            tambah = pd.DataFrame({"divisi": belum})
+            for k in ("mpp", "actual", "gap", "adp", "ftap", "need",
+                      "kandidat", "ongoing", "hired", "pool", "gagal"):
+                tambah[k] = 0
+            div = pd.concat([div, tambah[div.columns]], ignore_index=True)
+
+    level = {}
+    for r in div.itertuples():
+        lvl = M.level_summary(_ref, _hc, _dfc, r.divisi, site=site, adp=_adp)
+        # Level yang punya kandidat di kolom proses tapi belum punya baris —
+        # perlakuan yang sama dengan divisi di atas, supaya baris level selalu
+        # menjumlah ke baris divisinya.
+        if pb_lvl is not None:
+            awalan = f"{r.divisi}{C.LEVEL_SEP}"
+            punya = set(lvl["level"]) if len(lvl) else set()
+            kurang = [str(i)[len(awalan):] for i in pb_lvl.index
+                      if str(i).startswith(awalan)
+                      and str(i)[len(awalan):] not in punya]
+            if kurang:
+                kolom = list(lvl.columns) if len(lvl.columns) else [
+                    "level", "mpp", "actual", "gap", "adp", "ftap", "need",
+                    "kandidat", "ongoing", "hired", "pool", "gagal", "level_code"]
+                t = pd.DataFrame(0, index=range(len(kurang)), columns=kolom)
+                t["level"] = kurang
+                if "level_code" in kolom:
+                    t["level_code"] = None
+                lvl = pd.concat([lvl, t], ignore_index=True)
+                for k in ("mpp", "actual", "gap", "adp", "ftap", "need",
+                          "kandidat", "ongoing", "hired", "pool", "gagal"):
+                    if k in lvl.columns:
+                        lvl[k] = pd.to_numeric(lvl[k], errors="coerce").fillna(0).astype(int)
+        level[r.divisi] = lvl
     return div, level, pb_div, pb_lvl
 
 
@@ -1339,7 +1410,7 @@ def page_division():
     """
     df, sf, lt = data_or_stop()
     try:
-        ref, hc, adp = get_mpp_actual()
+        ref, hc, adp, bm = get_mpp_actual()
     except Exception as exc:  # noqa: BLE001
         st.error(f"MPP or the employee list could not be loaded.\n\n{exc}")
         st.stop()
@@ -1383,7 +1454,6 @@ def page_division():
     # akan selalu nol saat filternya "In process".
     dsaring = M.filter_date_range(df, sf, mulai, akhir)
     dfc = _cand_divisi(dsaring)
-    dfc_all = _cand_divisi(df)
     est = _estimasi_semua(sf, df)
     periode = (f"{pd.Timestamp(mulai):%d %b %Y} – {pd.Timestamp(akhir):%d %b %Y}"
                if mulai and akhir else "all periods")
@@ -1391,7 +1461,7 @@ def page_division():
         periode += " · " + ", ".join(status_p)
 
     div, level, pb_div, pb_lvl = _rekap_divisi(
-        ref, hc, adp, dfc, dfc_all, sf, df, site, mulai, akhir, tuple(status_p))
+        ref, hc, adp, bm, dfc, site, mulai, akhir, tuple(status_p))
     if div.empty:
         st.markdown(theme.empty_state("No data yet", "—"), unsafe_allow_html=True)
         return
@@ -1430,25 +1500,31 @@ def page_division():
     for r in div.itertuples():
         d = r._asdict()
         sel = _baris_divisi(f"<b>{theme.esc(r.divisi)}</b>", d, pb_div, r.divisi)
-        unduh.append(_baris_polos([r.divisi] + sel[1:]))
+        unduh.append(_baris_polos([r.divisi, ""] + sel[1:]))
 
         lvl = level.get(r.divisi)
         detail = []
         if lvl is not None and len(lvl):
             for x in lvl.itertuples():
-                kunci = f"{r.divisi} ▸ {x.level}"
+                kunci = f"{r.divisi}{C.LEVEL_SEP}{x.level}"
                 dsel = _baris_divisi(theme.esc(x.level), x._asdict(), pb_lvl, kunci)
                 detail.append(dsel)
-                unduh.append(_baris_polos([f"   {x.level}"] + dsel[1:]))
+                unduh.append(_baris_polos([r.divisi, x.level] + dsel[1:]))
         baris.append({"cells": sel, "detail": detail})
 
     # Baris TOTAL memakai penjumlahan kolom apa adanya. Angka proses dijumlahkan
     # dari tabel divisi, bukan dihitung ulang dari nol, supaya total dan isinya
     # tidak mungkin berbeda.
     def jum(slug, jenis):
+        """Total kolom proses — HANYA dari divisi yang benar-benar punya baris.
+
+        Menjumlahkan seluruh isi pb_div akan memuat grup yang tidak tampil
+        sebagai baris, dan baris TOTAL jadi lebih besar dari jumlah kolomnya.
+        """
         if pb_div is None:
             return 0
-        return int(pb_div[f"{slug}_{jenis}"].sum())
+        return int(pb_div.reindex(div["divisi"])[f"{slug}_{jenis}"]
+                   .fillna(0).sum())
 
     total_sel = ["TOTAL", n(total["mpp"]), n(total["actual"]),
                  f'{total["gap"]:+d}', n(total["adp"]), n(total["ftap"]),
@@ -1460,7 +1536,7 @@ def page_division():
     unduh_saja("sd_tabel", f"Summary by Division — {judul}",
                f"{len(div)} divisions · {periode}",
                HEAD_DIVISI, unduh, align=ALIGN_DIVISI,
-               total_row=_baris_polos(total_sel))
+               total_row=_baris_polos(["TOTAL", ""] + total_sel[1:]))
     st.markdown(theme.group_table(
         "sd", KOLOM_DIVISI, baris, tinggi=560,
         petunjuk=f"{len(div)} divisions · [+] opens the level breakdown",
@@ -1476,8 +1552,9 @@ def page_division():
         "informational: how many of that Actual are Future Talent Acceleration "
         "Program participants. It no longer moves Need to hire, because each one "
         "now carries their own budget in MPP2. The "
-        "four process groups read the <b>Result</b> column of each stage, exactly "
-        "like the team\u2019s sheet: <b>On progress</b> and <b>Passed</b> count "
+        "four process groups read the <b>Result</b> columns of the monitoring "
+        "tab — the very tab the team\u2019s own sheet reads — so source and "
+        "formula are both identical: <b>On progress</b> and <b>Passed</b> count "
         "only candidates whose process is still live (the <b>Process status</b> "
         "filter, <i>In process</i> by default). In that mode the process groups "
         "<b>ignore the period filter</b> — \"where is everyone right now\" has no "
@@ -1502,8 +1579,7 @@ def page_division():
     # melainkan tahu persis di mana pencatatannya bolong.
     stat_kode = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in status_p]
     berjalan = set(stat_kode or M.STATUS_BERJALAN) == set(M.STATUS_BERJALAN)
-    kunci_rantai = set((dfc_all if berjalan else dfc)["cand_key"])
-    rantai = M.process_chain(sf, df, cand_keys=kunci_rantai, statuses=stat_kode)
+    rantai = M.process_chain_monitoring(bm, site=site, statuses=stat_kode)
     if rantai:
         st.markdown(theme.section_heading(
             3, "Pipeline consistency",

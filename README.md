@@ -705,53 +705,97 @@ masuk ke MPP2, tiap peserta sudah punya anggarannya sendiri di divisi tujuannya
 menghitung orang yang sama dua kali. Kolom FTAP sekarang murni keterangan:
 berapa dari Actual itu peserta program.
 
-### Kolom proses: dua mode
+### Kolom proses: sumber & rumus sama dengan sheet
 
-**Mode "In process"** (bawaan) — kolom proses **tidak ikut filter tanggal
-halaman**. "Sekarang orangnya ada di mana" tidak punya periode; jendela waktu
-sudah dipatok di dalam rumusnya sendiri.
+Sejak 11 Sep 2026 empat kolom proses di halaman ini dibaca dari **tab monitoring
+kandidat** (`MONITORING_GID_PROCESS = 593032148` di spreadsheet Monitoring
+2026) — tab yang sama dengan yang dibaca rumus sheet, yang di spreadsheet Report
+muncul sebagai *Backend Monitoring*. Keduanya cermin satu sama lain: 3.951
+baris, 2.016 di antaranya punya STATUS, dan hitungan STATUS-nya cocok persis.
 
-Aturannya (arahan Navi, 11 Sep 2026) menirukan rantai yang benar-benar terjadi:
+Arahan Navi: *"kalau sourcenya sudah sama maka dengan rumus yang sama hasilnya
+sama kan? samakan rumusnya."* Dan memang begitu hasilnya.
 
-1. **On Progress** dan **Passed** dihitung dari kandidat berstatus OPEN.
-2. Yang lulus di sebuah tahap pasti lanjut ke tahap berikutnya, jadi seluruh
-   isi tahap berikutnya — on progress + passed + failed — **tidak boleh
-   melebihi jumlah yang lulus di tahap sebelumnya**.
-3. Kolom **Failed** mengisi tepat sisa yang belum tercatat:
+Halaman lain **tetap** membaca `fix_centralized` — di situlah peta tahap portal
+lengkap (Technical Test, seluruh tanggal per tahap, lead time). Yang dipindah
+hanya empat kolom proses di Summary by Division.
+
+Keuntungan lain: tab ini punya kolom **RESULT MCU** langsung, jadi tidak perlu
+lagi menumpang hasil FU MCU.
+
+**Rumusnya:**
+
+1. **On Progress** dan **Passed** dari kolom Result, disaring status (bawaan
+   `OPEN` = In process).
+2. **Failed** dari kolom Result, jendela **dua bulan terakhir** pada tanggal
+   MULAI tahap, status diabaikan. Kolom proses tidak ikut filter tanggal
+   halaman — "sekarang orangnya ada di mana" tidak punya periode.
+3. **Batas rantai**, per baris: isi sebuah tahap (on progress + passed + failed)
+   tidak boleh melebihi yang lulus di tahap sebelumnya. Failed mengisi tepat
+   sisanya:
 
    ```
-   Failed = min( gagal dalam DUA BULAN TERAKHIR ,
-                 lulus tahap sebelumnya − (on progress + passed) )
+   Failed(B) = min( gagal dalam dua bulan terakhir ,
+                    Passed(A) − (B.on progress + B.passed) )
    ```
 
-   Kalau tahap ini sudah menampung semua yang lulus sebelumnya, sisanya nol dan
-   Failed ikut nol. Kalau masih ada yang hilang, Failed boleh terisi sampai
-   sebanyak yang hilang itu — tidak lebih.
-4. **Interview User** tahap pertama di rantai, jadi tidak punya batas atas:
-   Failed-nya jendela dua bulan apa adanya, status diabaikan.
+Dihitung di butiran `divisi ▸ level`, lalu angka divisinya diturunkan dengan
+menjumlahkan baris levelnya — hierarkinya dijamin konsisten.
 
-Jendela dua bulan = tanggal 1 bulan lalu sampai akhir bulan ini
-(`metrics.process_failed_window()`).
+**Hasil 11 Sep 2026 — rantainya menutup persis:**
 
-Hasil 11 Sep 2026 — **tiap baris divisi**, Psychotest on-prog + passed sama
-persis dengan Interview User passed:
+| Passed at | People | Should appear at | Recorded | Gap |
+|---|---:|---|---:|---:|
+| Interview User | 82 | Psychotest on progress + passed | 82 | **0** |
+| Psychotest | 50 | Offering on progress + passed | 50 | **0** |
+| Offering | 32 | MCU on progress + passed | 32 | **0** |
 
-| Divisi | IU passed | Psy on-prog + passed | Psy failed |
-|---|---:|---:|---:|
-| Operation | 21 | 12 + 9 = 21 | 0 |
-| Engineering | 16 | 3 + 13 = 16 | 0 |
-| Plant & Maintenance | 16 | 6 + 10 = 16 | 0 |
-| Human Capital Management | 7 | 1 + 6 = 7 | 0 |
-| Health, Safety & Environment | 6 | 5 + 1 = 6 | 0 |
-| Supply Chain Management | 5 | 0 + 5 = 5 | 0 |
+Per divisi juga menutup: Operation 21→21 · Engineering 16→16 · Plant &
+Maintenance 16→16 · HCM 7→7 · HSE 7→7 · Supply Chain 5→5.
 
-Total: Interview User 17 / 88 / 84 · Psychotest 33 / 51 / 0 · Offering
-19 / 33 / 0 · MCU 26 / 6 / 1.
+Total: Interview User 17 / 82 / 83 · Psychotest 32 / 50 / 0 · Offering
+18 / 32 / 0 · MCU 26 / 6 / 0.
 
 **Mode status lain** — begitu Closed / Failed / On hold / Backup ikut dipilih,
-batas rantai tidak berlaku lagi (yang ditanya bukan lagi "sekarang di mana
-orangnya"), filter tanggal halaman kembali berlaku, dan ketiga kolom memakai
-kosakata hasil apa adanya: DECLINE dan WITHDRAWN di Offering, UNFIT di MCU.
+batas rantai tidak berlaku lagi dan ketiga kolom memakai kosakata hasil apa
+adanya: `DECLINE` dan `WITHDRAWN` di Offering, `UNFIT` di MCU.
+
+**Satu jebakan yang memakan waktu:** kolom sheet bertipe *string nullable*, jadi
+sel kosong tetap `NA` setelah `astype(str)` — dan `NA` di dalam masker boolean
+lolos sebagai True. Tanpa `.fillna("")`, 1.935 baris kosong sisa template ikut
+terbaca sebagai kandidat.
+
+### Baris harus menjumlah ke TOTAL
+
+Diperbaiki 11 Sep 2026 setelah Navi menjumlahkan sendiri kolom *Interview User
+— Passed* di file unduhan dan mendapat **73**, sementara baris TOTAL menulis
+**88**. Tiga sebab terpisah, semuanya nyata:
+
+1. **Grup proses tanpa baris.** Kandidat yang departemennya tidak dikenal MPP
+   maupun daftar karyawan (label `Not filled in at source`, 15 orang lulus
+   Interview User) ikut terhitung di TOTAL tapi tidak punya baris di tabel.
+   Sekarang grup seperti itu **ditambahkan sebagai baris** dengan MPP dan Actual
+   nol. Perlakuan yang sama berlaku untuk level di dalam divisi.
+2. **TOTAL menjumlah lebih banyak daripada yang tampil.** Baris TOTAL kini
+   dihitung dengan `pb_div.reindex(div["divisi"])` — hanya divisi yang benar-
+   benar punya baris.
+3. **Batas rantai dihitung dua kali di butiran berbeda.** Kolom proses sekarang
+   dihitung di butiran paling halus (`divisi ▸ level`) lebih dulu, lalu angka
+   divisinya **diturunkan dengan menjumlahkan baris levelnya**. Sebelumnya
+   keduanya dihitung terpisah, dan batas rantai per divisi bisa berbeda dari
+   batas per level — membuat baris level tidak menjumlah ke barisnya. Batas
+   rantainya tetap terpenuhi: penjumlahan pertidaksamaan tetap pertidaksamaan.
+
+**Dan file unduhannya memisahkan Divisi dan Level jadi dua kolom.** Di layar
+barisnya bertingkat jadi jelas mana induk mana anak; di dalam file keduanya
+berdiri sejajar. Sempat ditandai lekukan spasi, dan Excel membuang lekukannya —
+siapa pun yang menjumlahkan satu kolom lalu ikut menghitung baris level, hasilnya
+dua kali lipat. Dengan dua kolom, "baris divisi" = baris yang kolom **Level**-nya
+kosong.
+
+Diverifikasi dengan mengunduh file dari aplikasi yang berjalan lalu menjumlahkan
+ulang tiap kolom: 26 baris divisi, 118 baris level, **23 dari 23 kolom cocok**
+dengan baris TOTAL, dan baris level menjumlah tepat ke baris divisinya.
 
 ### Rekonsiliasi terhadap sheet (10 Sep 2026)
 

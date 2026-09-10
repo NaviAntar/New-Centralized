@@ -185,6 +185,45 @@ REPORT_GID_ADP = ""
 # program menerima orang baru (BCP 41, KCP 33, ACP 15 per 10 Sep 2026).
 FTAP_POSITION_PREFIX = "FTAP"
 
+# Pemisah kunci "divisi ▸ level" untuk tabel proses. Dijadikan konstanta supaya
+# pembuat kunci dan pembacanya tidak mungkin memakai pemisah yang berbeda.
+LEVEL_SEP = " ▸ "
+
+# ── Sumber kolom proses di Summary by Division ─────────────────────────────
+# Tab monitoring kandidat di spreadsheet Monitoring 2026 — tab yang SAMA dengan
+# yang dibaca rumus "Copy of Summary by Division" lewat Backend Monitoring di
+# spreadsheet Report (isinya cermin satu sama lain: 3.951 baris, STATUS-nya
+# cocok persis). Dipakai KHUSUS untuk kolom proses di halaman Summary by
+# Division; halaman lain tetap membaca fix_centralized (arahan Navi, 11 Sep
+# 2026: "kalau sumbernya sudah sama, dengan rumus yang sama hasilnya sama").
+MONITORING_GID_PROCESS = "593032148"
+MONITORING_SHEET_PROCESS = "DATABASE EXISTING PROJECT 2026"
+
+# Sebutan level di tab monitoring tidak sama persis dengan nama level portal.
+MONITORING_LEVEL_ALIAS = {
+    "JUNIOR STAFF": "Jr. Staff / Foreman",
+    "JR STAFF": "Jr. Staff / Foreman",
+    "JR. STAFF": "Jr. Staff / Foreman",
+    "FOREMAN": "Jr. Staff / Foreman",
+    "SUPERVISOR": "Supervisor",
+    "SUPERINTENDENT": "Superintendent",
+    "SPERINTENDENT": "Superintendent",     # salah ketik di sumber
+    "MANAGER": "Manager",
+    "GENERAL MANAGER": "General Manager",
+    "NON STAFF": "Non Staff",
+    "NON-STAFF": "Non Staff",
+    "MEKANIK": "Non Staff",
+    "OPERATOR": "Non Staff",
+}
+
+
+def monitoring_level(nilai) -> str:
+    """Sebutan level di tab monitoring -> nama level yang dipakai portal."""
+    teks = str(nilai or "").strip()
+    if not teks or teks.lower() == "nan":
+        return "No level"
+    return MONITORING_LEVEL_ALIAS.get(teks.upper(), teks)
+
 # Nama posisi FTAP menyebut departemen tujuannya di belakang tanda hubung, dan
 # ke situlah budget, reforecast, dan orangnya dihitung (arahan Navi, 11 Sep
 # 2026). Sebelumnya semuanya menumpuk di Human Capital Management karena itu
