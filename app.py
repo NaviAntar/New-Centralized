@@ -429,16 +429,13 @@ def page_tracking_candidate():
     # sudah CLOSE atau FAILED, "estimasi onboarding" tidak menjawab apa pun.
     est = None
     if hstat == "OPEN":
-        pic_peta = M.monitoring_pic(sf)
-        est = M.estimate_onboarding(sf, pilih, M.stage_averages(sf, pic_peta),
-                                    pic_peta.get(pilih))
+        est = M.estimate_onboarding(sf, pilih, M.stage_averages(sf))
         if est["total"] is not None:
             # Tanggal jadi nilai utama, bukan jumlah harinya: yang ditanya orang
             # adalah "kapan", bukan "berapa". Sisa harinya tetap ditulis di
             # bawahnya untuk yang perlu tahu jaraknya.
             import math
-            perkiraan = M.estimate_date(est["total"])
-            kartu.append(("Estimate Onboarding", f"{perkiraan:%d %b %Y}",
+            kartu.append(("Estimate Onboarding", f'{est["tanggal"]:%d %b %Y}',
                           f'{math.ceil(est["total"])} working days to go',
                           "📅", theme.STATUS["warn"]))
 
@@ -448,17 +445,29 @@ def page_tracking_candidate():
             st.markdown(theme.kpi_card(lab, val, sub, emoji=emo, accent=warna, value_size=24),
                         unsafe_allow_html=True)
 
+    # Jadwalnya ditampilkan utuh, bukan cuma angka akhirnya. Perkiraan tanggal
+    # yang tidak bisa ditelusuri selalu berakhir sebagai angka yang tidak
+    # dipercaya siapa pun; dengan langkahnya terbaca, orang bisa menunjuk tahap
+    # mana yang menurutnya tidak masuk akal.
     if est and est["rincian"]:
-        rincian = " · ".join(
-            f'<b>{theme.esc(x["tahap"])}</b> {n(x["hari"], 1)}' for x in est["rincian"])
-        st.markdown(theme.inline_note(
-            f'How it is estimated: what is left of the stage currently running '
-            f'({n(est["sisa_tahap_ini"], 1)} days) plus the average of every stage '
-            f'not yet started ({n(est["tahap_berikutnya"], 1)} days). Both are '
-            f'measured against how long each stage ACTUALLY takes, not against the '
-            f'SLA budget, using this candidate\u2019s own recruiter speed where '
-            f'there is history. Breakdown: {rincian}.',
-            block=True), unsafe_allow_html=True)
+        with theme.card("tc_jadwal", "Projected schedule",
+                        "each stage takes its overall recruitment average"):
+            tabel("tc_jadwal", f'Projected schedule — {row["candidate_id"]}',
+                  f'{est["total"]:.1f} working days to {est["tanggal"]:%d %b %Y}',
+                  ["Stage", "Average", "Cumulative", "Expected by", "Basis"],
+                  [[theme.esc(x["tahap"]), n(x["hari"], 1), n(x["kumulatif"], 1),
+                    f'{x["tanggal"]:%d %b %Y}', theme.esc(x["dasar"])]
+                   for x in est["rincian"]], align="lrrll", max_rows=None)
+            st.markdown(theme.inline_note(
+                "Read it forward like a calendar: the stage running now finishes "
+                f'after what is left of its average ({n(est["sisa_tahap_ini"], 1)} '
+                "days), then every stage still ahead adds its own average "
+                f'({n(est["tahap_berikutnya"], 1)} days in total), until '
+                "onboarding. The averages are how long each stage <b>actually</b> "
+                "takes across all recruitment — not the SLA budget, and not this "
+                "recruiter alone, so two candidates at the same stage get the same "
+                "date. Weekends and public holidays are excluded and the total is "
+                "rounded up.", block=True), unsafe_allow_html=True)
 
     with theme.card("tc_stages", "Selection stages",
                     "lead time in working days against this level\u2019s budget"):
@@ -546,8 +555,12 @@ def _kartu_ringkas(r: dict):
 
 @st.cache_data(show_spinner=False, ttl=C.CACHE_TTL_SECONDS)
 def _estimasi_semua(_sf, _df):
-    """Perkiraan sisa hari untuk seluruh kandidat OPEN — dihitung sekali."""
-    return M.estimate_all(_sf, _df, M.monitoring_pic(_sf))
+    """Perkiraan sisa hari untuk seluruh kandidat OPEN — dihitung sekali.
+
+    Memakai rata-rata seluruh rekrutmen per tahap, bukan rata-rata per PIC:
+    satu acuan yang sama untuk semua orang (arahan Navi, 10 Sep 2026).
+    """
+    return M.estimate_all(_sf, _df)
 
 
 def _sel_sla(nilai, budget=None):
@@ -1264,7 +1277,7 @@ def _awal_bulan():
 
 
 @st.cache_data(show_spinner=False, ttl=C.CACHE_TTL_SECONDS)
-def _rekap_divisi(_ref, _hc, _adp, _dfc, _sf, _df, site, mulai, akhir):
+def _rekap_divisi(_ref, _hc, _adp, _dfc, _sf, _df, site, mulai, akhir, status=()):
     """Semua yang dibutuhkan tabel: ringkasan divisi, level tiap divisi, dan
     sebaran prosesnya. Dihitung sekali, bukan per baris.
 
@@ -1319,7 +1332,7 @@ def page_division():
     site = None if (pilih or "All") == "All" else pilih
 
     hari_ini = pd.Timestamp.today().normalize().date()
-    mulai, akhir = filterbar("sd_f", [
+    mulai, akhir, status_p = filterbar("sd_f", [
         {"label": "Active from", "key": "sd_dari",
          "kind": "date", "value": _awal_bulan(),
          "help": "A candidate counts as active in the period when their own "
@@ -1328,6 +1341,11 @@ def page_division():
                  "columns only: MPP, Actual and ADP are today's snapshot."},
         {"label": "Active to", "key": "sd_sampai", "kind": "date",
          "value": hari_ini},
+        {"label": "Process status", "key": "sd_status", "kind": "multi",
+         "options": list(C.STATUS_OPTIONS), "default": [],
+         "placeholder": "All statuses",
+         "help": "Status of the recruitment process for that position. Filters "
+                 "the candidate columns; MPP, Actual and ADP do not move."},
     ])
     if isinstance(mulai, (list, tuple)):
         mulai = mulai[0] if mulai else None
@@ -1337,13 +1355,16 @@ def page_division():
         mulai, akhir = akhir, mulai
 
     dsaring = M.filter_date_range(df, sf, mulai, akhir)
+    dsaring = M.filter_status(dsaring, status_p)
     dfc = _cand_divisi(dsaring)
     est = _estimasi_semua(sf, df)
     periode = (f"{pd.Timestamp(mulai):%d %b %Y} – {pd.Timestamp(akhir):%d %b %Y}"
                if mulai and akhir else "all periods")
+    if status_p:
+        periode += " · " + ", ".join(status_p)
 
     div, level, pb_div, pb_lvl = _rekap_divisi(
-        ref, hc, adp, dfc, sf, dsaring, site, mulai, akhir)
+        ref, hc, adp, dfc, sf, dsaring, site, mulai, akhir, tuple(status_p))
     if div.empty:
         st.markdown(theme.empty_state("No data yet", "—"), unsafe_allow_html=True)
         return
@@ -1425,7 +1446,9 @@ def page_division():
         "below zero). <b>FTAP</b> is shown as its own division: those employees "
         "sit under Human Capital Management in the employee list, which made HCM "
         "look far larger than it is; their MPP is set equal to Actual because the "
-        "program has no headcount plan of its own. A candidate counts in the period "
+        "program has no headcount plan of its own. The <b>Process status</b> filter "
+        "narrows the candidate columns the same way the period does. A candidate "
+        "counts in the period "
         f"({periode}) when their own activity window overlaps it, so someone who "
         "entered in June and is still at MCU today is still counted; MPP, Actual "
         "and ADP are today's snapshot, not the period's.", block=True), unsafe_allow_html=True)

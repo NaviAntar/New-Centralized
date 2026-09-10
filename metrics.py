@@ -1437,6 +1437,23 @@ def monitoring_table(df: pd.DataFrame, sf: pd.DataFrame, lt: pd.DataFrame,
     return out
 
 
+def filter_status(df: pd.DataFrame, labels) -> pd.DataFrame:
+    """Saring kandidat menurut status prosesnya. Kosong berarti semua.
+
+    `labels` memakai sebutan yang dilihat pengguna ("Open", "Backup candidate");
+    dipetakan ke nilai di sheet lewat C.STATUS_OPTIONS. Backup candidate tidak
+    punya nilai status1 sendiri di sebagian baris — keputusannya tercatat di
+    kolom Result — jadi kolom `talent_pool` ikut diperiksa.
+    """
+    if not labels:
+        return df
+    mau = {C.STATUS_OPTIONS.get(x, str(x).upper()) for x in labels}
+    cocok = df["status1"].isin(mau)
+    if C.TALENT_POOL_RESULT in mau and "talent_pool" in df.columns:
+        cocok |= df["talent_pool"].fillna(False)
+    return df[cocok]
+
+
 def filter_monitoring(d: pd.DataFrame, sites=None, pics=None, departemen=None,
                       statuses=None, levels=None, level_types=None) -> pd.DataFrame:
     """Filter halaman monitoring. Daftar kosong berarti 'semua'."""
@@ -1668,112 +1685,139 @@ def stage_averages(sf: pd.DataFrame, by_name: pd.Series | None = None) -> dict:
 
 def estimate_onboarding(sf: pd.DataFrame, cand_key: str, rata: dict,
                         pic: str | None = None) -> dict:
-    """Perkiraan sisa hari kerja sampai onboarding untuk satu kandidat OPEN.
+    """Jadwal perkiraan sampai onboarding untuk satu kandidat OPEN.
 
-    Hasilnya: {"sisa_tahap_ini", "tahap_berikutnya", "total", "rincian"}.
-    `rincian` menyebut tiap tahap dan sumber angkanya, supaya perkiraannya bisa
-    ditelusuri dan bukan sekadar satu angka yang muncul entah dari mana.
+    Cara hitungnya persis seperti orang membaca kalender ke depan (arahan Navi,
+    10 Sep 2026):
+
+        Si A sedang di Interview User. Rata-rata Interview User 1 hari, jadi
+        besok dia mestinya masuk Psychotest. Rata-rata Psychotest 2 hari, jadi
+        3 hari dari sekarang dia mestinya masuk Offering. Begitu terus sampai
+        Onboarding.
+
+    Jadi bukan satu angka yang muncul entah dari mana: tiap tahap yang belum
+    dijalani menambah rata-ratanya sendiri, dan penunjuk waktunya bergerak maju
+    tahap demi tahap. `rincian` menyimpan tiap langkah itu lengkap dengan
+    tanggal perkiraannya, supaya angka akhirnya bisa ditelusuri.
+
+    Yang dipakai adalah **rata-rata seluruh rekrutmen** per tahap, bukan
+    rata-rata PIC kandidat ini. Navi minta satu acuan yang sama untuk semua
+    orang: perkiraan yang ikut berubah tergantung siapa PIC-nya membuat dua
+    kandidat di tahap yang sama punya tanggal berbeda tanpa alasan yang bisa
+    dijelaskan ke pengguna. Parameter `pic` dibiarkan ada supaya pemanggil lama
+    tidak putus, tapi tidak lagi dipakai.
+
+    Hasilnya: {"sisa_tahap_ini", "tahap_berikutnya", "total", "tanggal",
+    "rincian"}.
     """
     baris = sf[sf["cand_key"] == cand_key].sort_values("stage_no")
-    baris = baris[baris["applicable"]]
+    # "Onboarding" bukan tahap yang memakan waktu: tanggal mulai dan selesainya
+    # sama, dan One Month Notice sudah BERAKHIR di tanggal onboarding. Ikut
+    # menghitungnya menambah satu hari palsu di ujung jadwal.
+    baris = baris[baris["applicable"] & (baris["stage"] != "Onboarding")]
+    kosong = {"sisa_tahap_ini": None, "tahap_berikutnya": None, "total": None,
+              "tanggal": None, "rincian": []}
     if baris.empty:
-        return {"sisa_tahap_ini": None, "tahap_berikutnya": None,
-                "total": None, "rincian": []}
+        return kosong
 
-    def rata_tahap(tahap):
-        if pic is not None:
-            v = rata["per_pic"].get((pic, tahap))
-            if v is not None and pd.notna(v):
-                return float(v), "recruiter average"
+    def rata_tahap(tahap, budget):
+        """Lama tahap ini menurut rata-rata seluruh rekrutmen."""
         v = rata["umum"].get(tahap)
         if v is not None and pd.notna(v):
             return float(v), "overall average"
+        # Tahap yang belum pernah ada riwayatnya sama sekali ditambal budget
+        # SLA-nya — lebih baik daripada menghilangkan tahap itu dari jadwal.
+        if pd.notna(budget):
+            return float(budget), "SLA budget (no history yet)"
         return None, None
 
+    hari_ini = pd.Timestamp.today().normalize()
     rincian = []
     sisa_ini = 0.0
+    berikut = 0.0
+    kumulatif = 0.0
 
-    # Tahap yang sedang berjalan: sudah mulai, belum selesai. Sisanya diukur
-    # terhadap RATA-RATA LAMA TAHAP ITU DIKERJAKAN, bukan terhadap budget SLA
-    # (arahan Navi, 8 Sep 2026). Alasannya: budget adalah janji, rata-rata adalah
-    # kenyataan. Tahap yang budgetnya 5 hari tapi kenyataannya selalu 12 hari
-    # akan terus menghasilkan perkiraan yang meleset kalau yang dipakai budget.
-    # Kalau rata-ratanya sudah terlampaui, sisanya nol — "tinggal diselesaikan".
+    # Tahap yang sedang berjalan. Yang tersisa = rata-rata tahap itu dikurangi
+    # hari yang sudah terpakai, minimal nol: kalau sudah melewati rata-rata,
+    # yang tersisa bukan angka negatif melainkan "tinggal diselesaikan".
     jalan = baris[baris["start"].notna() & baris["end"].isna()]
     for r in jalan.itertuples():
         terpakai = working_days(pd.Series([r.start]),
-                                pd.Series([pd.Timestamp.today().normalize()])).iloc[0]
-        acuan, dasar = rata_tahap(r.stage)
-        if acuan is None:
-            acuan = float(r.budget) if pd.notna(r.budget) else None
-            dasar = "SLA budget (no history yet)"
+                                pd.Series([hari_ini])).iloc[0]
+        acuan, dasar = rata_tahap(r.stage, r.budget)
         if acuan is None:
             continue
         sisa = max(acuan - float(terpakai or 0), 0.0)
         sisa_ini += sisa
-        rincian.append({"tahap": r.stage, "hari": round(sisa, 1),
-                        "dasar": f"{dasar} {acuan:.1f} days, "
-                                 f"{int(terpakai or 0)} used"})
+        kumulatif += sisa
+        rincian.append({
+            "tahap": r.stage, "hari": round(sisa, 1),
+            "kumulatif": round(kumulatif, 1),
+            "tanggal": estimate_date(kumulatif),
+            "dasar": f"running · {dasar} {acuan:.1f} d, {int(terpakai or 0)} used",
+        })
 
-    # Tahap yang belum mulai DAN memang masih di depan. Tahap yang nomornya lebih
-    # kecil dari tahap terjauh yang sudah dijalani bukan sisa pekerjaan — itu
-    # tahap yang dilewati atau tanggalnya tidak pernah diisi (PRF Approval paling
-    # sering). Menghitungnya sebagai sisa membuat perkiraannya kepanjangan.
+    # Tahap yang belum mulai DAN memang masih di depan. Tahap yang nomornya
+    # lebih kecil dari tahap terjauh yang sudah dijalani bukan sisa pekerjaan —
+    # itu tahap yang dilewati atau tanggalnya tidak pernah diisi (PRF Approval
+    # paling sering). Menghitungnya membuat perkiraannya kepanjangan.
     sudah = baris[baris["start"].notna() | baris["end"].notna()]
     batas = sudah["stage_no"].max() if len(sudah) else -1
     belum = baris[baris["start"].isna() & baris["end"].isna()
                   & (baris["stage_no"] > batas)]
-    berikut = 0.0
     for r in belum.itertuples():
-        v, dasar = rata_tahap(r.stage)
-        if v is None:
-            v = float(r.budget) if pd.notna(r.budget) else None
-            dasar = "SLA budget (no history yet)"
+        v, dasar = rata_tahap(r.stage, r.budget)
         if v is None:
             continue
         berikut += v
-        rincian.append({"tahap": r.stage, "hari": round(v, 1), "dasar": dasar})
+        kumulatif += v
+        rincian.append({
+            "tahap": r.stage, "hari": round(v, 1),
+            "kumulatif": round(kumulatif, 1),
+            "tanggal": estimate_date(kumulatif),
+            "dasar": dasar,
+        })
 
+    if not rincian:
+        return kosong
     total = sisa_ini + berikut
     return {"sisa_tahap_ini": round(sisa_ini, 1),
             "tahap_berikutnya": round(berikut, 1),
-            "total": round(total, 1), "rincian": rincian}
+            "total": round(total, 1),
+            "tanggal": estimate_date(total),
+            "rincian": rincian}
 
 
 def estimate_all(sf: pd.DataFrame, df: pd.DataFrame,
                  by_name: pd.Series | None = None) -> pd.Series:
-    """Perkiraan sisa hari untuk SEMUA kandidat OPEN sekaligus.
+    """Perkiraan sisa hari kerja untuk SEMUA kandidat OPEN sekaligus.
 
-    Versi borongan dari estimate_onboarding(), dipakai tabel yang menampilkan
-    banyak kandidat. Logikanya sama persis — dihitung vektor supaya halaman yang
-    berisi ratusan baris tidak memanggil fungsi per baris.
+    Versi borongan dari estimate_onboarding(); logikanya sama persis — dijalani
+    tahap demi tahap dengan rata-rata seluruh rekrutmen — hanya dihitung secara
+    vektor supaya halaman berisi ratusan baris tidak memanggil fungsi per baris.
+
+    `by_name` tidak lagi dipakai (lihat estimate_onboarding); tetap diterima
+    supaya pemanggil lama tidak putus.
     """
-    rata = stage_averages(sf, by_name)
+    rata = stage_averages(sf)
     buka = set(df[df["status1"] == "OPEN"]["cand_key"])
-    d = sf[sf["cand_key"].isin(buka) & sf["applicable"]].copy()
+    # "Onboarding" dikeluarkan — lihat alasannya di estimate_onboarding().
+    d = sf[sf["cand_key"].isin(buka) & sf["applicable"]
+           & (sf["stage"] != "Onboarding")].copy()
     if d.empty:
         return pd.Series(dtype=float)
 
+    # Lama tiap tahap menurut rata-rata seluruh rekrutmen; budget hanya menambal
+    # tahap yang belum pernah ada riwayatnya sama sekali.
+    d["_acuan"] = d["stage"].map(rata["umum"]).astype("float64")
+    d["_acuan"] = d["_acuan"].fillna(d["budget"])
+
     hari_ini = pd.Timestamp.today().normalize()
-    jalan = d[d["start"].notna() & d["end"].isna()].copy()
+    jalan = d[d["start"].notna() & d["end"].isna() & d["_acuan"].notna()].copy()
     if len(jalan):
         terpakai = working_days(jalan["start"],
                                 pd.Series([hari_ini] * len(jalan), index=jalan.index))
-        # Acuan tahap berjalan = rata-rata lama tahap itu dikerjakan (per PIC
-        # kalau ada riwayatnya), bukan budget SLA-nya. Lihat alasannya di
-        # estimate_onboarding(). Budget hanya menambal tahap yang belum pernah
-        # ada riwayatnya sama sekali.
-        if by_name is not None:
-            jalan["_pic"] = jalan["cand_key"].map(by_name)
-            acuan = pd.Series([
-                rata["per_pic"].get((p, st), rata["umum"].get(st))
-                for p, st in zip(jalan["_pic"], jalan["stage"])
-            ], index=jalan.index, dtype="float64")
-        else:
-            acuan = jalan["stage"].map(rata["umum"]).astype("float64")
-        acuan = acuan.fillna(jalan["budget"])
-        jalan["_sisa"] = (acuan - terpakai.astype(float)).clip(lower=0)
-        jalan = jalan[jalan["_sisa"].notna()]
+        jalan["_sisa"] = (jalan["_acuan"] - terpakai.astype(float)).clip(lower=0)
         sisa_ini = jalan.groupby("cand_key")["_sisa"].sum()
     else:
         sisa_ini = pd.Series(dtype=float)
@@ -1782,22 +1826,10 @@ def estimate_all(sf: pd.DataFrame, df: pd.DataFrame,
     # estimate_onboarding().
     dijalani = d[d["start"].notna() | d["end"].notna()]
     batas = dijalani.groupby("cand_key")["stage_no"].max()
-    belum = d[d["start"].isna() & d["end"].isna()].copy()
+    belum = d[d["start"].isna() & d["end"].isna() & d["_acuan"].notna()].copy()
     belum = belum[belum["stage_no"] > belum["cand_key"].map(batas).fillna(-1)]
-    if len(belum):
-        nm = belum["cand_key"].map(by_name) if by_name is not None else None
-        if nm is not None:
-            belum["_pic"] = nm
-            belum["_v"] = [
-                rata["per_pic"].get((p, s), rata["umum"].get(s))
-                for p, s in zip(belum["_pic"], belum["stage"])
-            ]
-        else:
-            belum["_v"] = belum["stage"].map(rata["umum"])
-        belum["_v"] = belum["_v"].fillna(belum["budget"])
-        berikut = belum.groupby("cand_key")["_v"].sum()
-    else:
-        berikut = pd.Series(dtype=float)
+    berikut = (belum.groupby("cand_key")["_acuan"].sum() if len(belum)
+               else pd.Series(dtype=float))
 
     total = sisa_ini.add(berikut, fill_value=0)
     return total.round(1)

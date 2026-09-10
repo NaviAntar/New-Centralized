@@ -605,6 +605,18 @@ TALENT_POOL_RESULT = "TALENT POOL"
 # form Apps Script — yang berganti hanya sebutannya, bukan datanya.
 BACKUP_LABEL = "Backup candidate"
 
+# Pilihan filter status proses. Label yang dilihat pengguna berbahasa Inggris;
+# nilai di sheet TETAP apa adanya, jadi peta ini yang menjembatani. "TALENT
+# POOL" sengaja tampil sebagai "Backup candidate" — sebutan yang dipakai tim
+# sejak 6 Sep 2026, sementara rumus di spreadsheet masih menulis TALENT POOL.
+STATUS_OPTIONS = {
+    "Open": "OPEN",
+    "Close": "CLOSE",
+    "Failed": "FAILED",
+    "Hold": "HOLD",
+    BACKUP_LABEL: TALENT_POOL_RESULT,
+}
+
 # Achievement recruiter dipotong di sini. Tanpa batas, orang yang kebetulan
 # memegang satu kandidat cepat bisa tampil 2.000% dan membuat kolomnya tidak
 # bisa dibandingkan antar orang — yang tinggi terbaca sebagai anomali, bukan

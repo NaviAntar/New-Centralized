@@ -705,6 +705,13 @@ sendiri di MPP2, dan kalau MPP-nya dibiarkan nol, Gap FTAP tampil sebagai
 kelebihan orang yang besar dan menutupi kekurangan divisi lain. Hasilnya HCM
 turun dari 232 jadi 143 orang.
 
+**Filter status proses.** Multiselect Open / Close / Failed / Hold / Backup
+candidate, kosong berarti semua. Sama seperti filter tanggal, yang disaring
+hanya kolom kandidat — MPP, Actual, dan ADP tidak ikut bergerak. Label
+"Backup candidate" dipetakan ke nilai `TALENT POOL` di sheet, dan kolom
+`talent_pool` ikut diperiksa karena sebagian baris pool masih tertulis OPEN di
+`status1`.
+
 **Filter rentang tanggal.** Dua kotak tanggal, default **tanggal 1 bulan
 berjalan sampai hari ini**. Yang disaring hanya kolom kandidat — MPP, Actual,
 dan ADP adalah potret hari ini, bukan kejadian dalam rentang waktu.
@@ -744,17 +751,44 @@ serta di tabel detail Summary by Division. Kolom itu dipisah dari "SLA / target"
 supaya keduanya bisa dibaca berdampingan; yang sudah CLOSE atau FAILED ditulis
 "selesai", karena perkiraan untuk proses yang sudah berhenti bukan informasi.
 
-Cara hitung sisa harinya — seluruhnya berdasarkan **rata-rata SLA yang
-benar-benar terjadi**, bukan budget (arahan Navi, 8 Sep 2026):
+Cara hitungnya **dijalani maju tahap demi tahap seperti membaca kalender**
+(arahan Navi, 10 Sep 2026):
 
-1. sisa tahap yang sedang berjalan = rata-rata lama tahap itu dikerjakan −
-   hari yang sudah terpakai, minimal nol;
-2. ditambah rata-rata tiap tahap yang **belum dijalani**.
+> Si A sedang di Interview User. Rata-rata Interview User 1 hari, jadi besok
+> dia mestinya masuk Psychotest. Rata-rata Psychotest 2 hari, jadi 3 hari dari
+> sekarang dia mestinya masuk Offering. Begitu terus sampai Onboarding.
 
-Budget hanya menambal tahap yang belum pernah ada riwayatnya sama sekali.
-Alasannya: budget adalah janji, rata-rata adalah kenyataan. Tahap yang
-budgetnya 5 hari tapi kenyataannya selalu 12 hari akan terus menghasilkan
-perkiraan yang meleset kalau yang dipakai budget.
+1. tahap yang sedang berjalan menyumbang **rata-ratanya dikurangi hari yang
+   sudah terpakai**, minimal nol;
+2. tiap tahap berikutnya menambah **rata-ratanya sendiri**, satu per satu,
+   sampai One Month Notice selesai.
+
+Yang dipakai adalah **rata-rata seluruh rekrutmen** per tahap — bukan budget
+SLA, dan bukan rata-rata PIC kandidat itu. Budget hanya menambal tahap yang
+belum pernah ada riwayatnya sama sekali.
+
+Kenapa bukan budget: budget adalah janji, rata-rata adalah kenyataan. Tahap
+yang budgetnya 5 hari tapi kenyataannya selalu 12 hari akan terus menghasilkan
+perkiraan yang meleset.
+
+Kenapa bukan rata-rata per PIC: perkiraan yang ikut berubah tergantung siapa
+PIC-nya membuat dua kandidat di tahap yang sama punya tanggal berbeda tanpa
+alasan yang bisa dijelaskan ke pengguna.
+
+Tahap **Onboarding** tidak ikut dihitung: tanggal mulai dan selesainya sama,
+dan One Month Notice sudah BERAKHIR di tanggal onboarding — memasukkannya
+menambah satu hari palsu di ujung jadwal.
+
+Rata-rata per tahap hari ini: PRF Approval 3,5 · Screening CV 0,6 ·
+Interview HR 0,9 · Interview User 1,8 · Technical Test 0,6 · Psychotest 1,7 ·
+Offering 5,8 · MCU 3,0 · Review MCU 2,3 · FU MCU 5,7 · One Month Notice 14,2.
+Perkiraan rata-rata 33,3 hari kerja untuk 465 kandidat OPEN.
+
+Di Tracking Kandidat, jadwalnya ditampilkan **utuh** sebagai tabel: tiap tahap,
+rata-ratanya, hari kumulatif, dan tanggal perkiraannya. Perkiraan tanggal yang
+tidak bisa ditelusuri selalu berakhir sebagai angka yang tidak dipercaya siapa
+pun; dengan langkahnya terbaca, orang bisa menunjuk tahap mana yang menurutnya
+tidak masuk akal.
 
 Rata-ratanya dihitung **per tahap dulu baru dijumlahkan** — bukan semua durasi
 dikumpulkan lalu dirata-rata sekali, karena tahap yang datanya banyak akan
