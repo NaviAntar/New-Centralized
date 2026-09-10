@@ -76,14 +76,37 @@ LEVEL_CODE_NAMES = {
 # Urutan tampil: dari level paling bawah ke paling atas.
 LEVEL_ORDER = [11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
 
+# Peserta FTAP diberi sebutan level sendiri supaya tidak tercampur dengan
+# karyawan tetap di level yang sama (arahan Navi, 11 Sep 2026). Mereka tetap
+# berada di divisi tujuannya, hanya barisnya terpisah saat divisi dibuka.
+FTAP_LEVEL_STAFF = "FTAP Staff"
+FTAP_LEVEL_NON_STAFF = "FTAP Non Staff"
 
-def level_name(code) -> str:
-    """Kode level angka -> sebutan tim. 'LS' dan nilai tak dikenal apa adanya."""
+# Urutan tampil nama level, dari paling bawah ke paling atas. Dua level FTAP
+# ditaruh tepat di atas padanan tetapnya: FTAP Non Staff setelah Non Staff,
+# FTAP Staff setelah Jr. Staff / Foreman.
+LEVEL_NAME_ORDER = [
+    "Non Staff", FTAP_LEVEL_NON_STAFF, "Jr. Staff / Foreman", FTAP_LEVEL_STAFF,
+    "Supervisor", "Superintendent", "Manager", "General Manager",
+    "Deputy Director", "Director", "President Director", "Commissioner",
+]
+
+
+def level_name(code, ftap: bool = False) -> str:
+    """Kode level angka -> sebutan tim. 'LS' dan nilai tak dikenal apa adanya.
+
+    `ftap` True mengembalikan sebutan FTAP: peserta program dipisah barisnya
+    supaya "Non Staff" di sebuah divisi tidak mencampur operator tetap dengan
+    anak FTAP yang masih dalam program.
+    """
     try:
-        return LEVEL_CODE_NAMES[int(float(code))]
+        nama = LEVEL_CODE_NAMES[int(float(code))]
     except (TypeError, ValueError, KeyError):
         teks = str(code or "").strip()
         return teks if teks and teks.lower() != "nan" else "No level"
+    if ftap:
+        return FTAP_LEVEL_NON_STAFF if nama == "Non Staff" else FTAP_LEVEL_STAFF
+    return nama
 
 
 # Nama lokasi panjang -> kode site, dipakai menyamakan sheet MPP/karyawan dengan
@@ -161,6 +184,52 @@ REPORT_GID_ADP = ""
 # di sini diturunkan dari Position Name sehingga ikut bertambah sendiri saat
 # program menerima orang baru (BCP 41, KCP 33, ACP 15 per 10 Sep 2026).
 FTAP_POSITION_PREFIX = "FTAP"
+
+# Nama posisi FTAP menyebut departemen tujuannya di belakang tanda hubung, dan
+# ke situlah budget, reforecast, dan orangnya dihitung (arahan Navi, 11 Sep
+# 2026). Sebelumnya semuanya menumpuk di Human Capital Management karena itu
+# yang tertulis di kolom Divisi.
+FTAP_DIVISION_MAP = {
+    "ENGINEERING": "Engineering",
+    "OPERATOR": "Operation",
+    "OPERATION": "Operation",
+    "HEALTH, SAFETY, & ENVIRONMENT": "Health, Safety & Environment",
+    "HEALTH, SAFETY & ENVIRONMENT": "Health, Safety & Environment",
+    "COST CONTROL": "Project Control",
+    "MECHANIC": "Plant & Maintenance",
+    "PLANT & MAINTENANCE": "Plant & Maintenance",
+    "WAREHOUSE": "Warehouse",
+    "HUMAN CAPITAL MANAGEMENT": "Human Capital Management",
+}
+
+
+def ftap_division(position_name, fallback: str | None = None) -> str | None:
+    """Divisi tujuan sebuah posisi FTAP, dibaca dari nama posisinya.
+
+    "FTAP - Cost Control" -> "Project Control". Nama yang tidak dikenal tetap
+    di `fallback` (biasanya Human Capital Management) daripada hilang.
+    """
+    teks = str(position_name or "").strip()
+    if not teks.upper().startswith(FTAP_POSITION_PREFIX):
+        return fallback
+    ekor = teks.split("-", 1)[1].strip().upper() if "-" in teks else ""
+    return FTAP_DIVISION_MAP.get(ekor, fallback)
+
+
+# Divisi yang digabung — baik MPP maupun Actual (arahan Navi, 11 Sep 2026).
+# Warehouse memang bagian dari rantai pasok, dan Digital Transformation tidak
+# pernah cukup besar untuk berdiri sendiri di samping Information Technology.
+DIVISION_MERGE = {
+    "Warehouse": "Supply Chain Management",
+    "Digital Transformation": "Digital Transformation & Information Technology",
+    "Information Technology": "Digital Transformation & Information Technology",
+}
+
+
+def merge_division(nama) -> str:
+    """Nama divisi setelah penggabungan. Yang tidak digabung kembali apa adanya."""
+    teks = str(nama or "").strip()
+    return DIVISION_MERGE.get(teks, teks)
 REPORT_GID_MPP = REPORT_GIDS["Update MPP"]
 
 # Tab "Backend" di Monitoring 2026 — matriks SLA per level + kalender libur.

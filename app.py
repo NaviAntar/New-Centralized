@@ -1129,9 +1129,14 @@ def get_mpp_actual():
 
 
 def _cand_divisi(df):
-    """Kandidat disandingkan dengan MPP: pakai nama kolom yang sama."""
+    """Kandidat disandingkan dengan MPP: pakai nama kolom yang sama.
+
+    Penggabungan divisi ikut diterapkan di sini — kalau tidak, kandidat
+    Warehouse akan berdiri di barisnya sendiri sementara MPP dan Actual-nya
+    sudah pindah ke Supply Chain Management.
+    """
     c = df.copy()
-    c["divisi"] = c["departement"]
+    c["divisi"] = c["departement"].map(C.merge_division)
     c["site"] = c["loc"]
     c["level_code"] = M.candidate_level_code(c)
     return c
@@ -1293,14 +1298,14 @@ def _rekap_divisi(_ref, _hc, _adp, _dfc, _sf, _df, site, mulai, akhir, status=()
     satu = c.drop_duplicates("cand_key")
     stat = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in (status or ())]
     pb_div = M.process_breakdown(_sf, _df, satu.set_index("cand_key")["divisi"],
-                                 statuses=stat)
+                                 statuses=stat, mulai=mulai, akhir=akhir)
     pb_div = pb_div.set_index("_grup") if len(pb_div) else None
 
     kunci_lvl = (satu["divisi"].astype(str) + " ▸ "
                  + satu["level_code"].map(C.level_name).astype(str))
     pb_lvl = M.process_breakdown(
         _sf, _df, pd.Series(kunci_lvl.values, index=satu["cand_key"]),
-        statuses=stat)
+        statuses=stat, mulai=mulai, akhir=akhir)
     pb_lvl = pb_lvl.set_index("_grup") if len(pb_lvl) else None
 
     level = {r.divisi: M.level_summary(_ref, _hc, _dfc, r.divisi, site=site,
@@ -1395,8 +1400,8 @@ def page_division():
         ("Gap", f'{total["gap"]:+d}', "actual − MPP", "⚖️",
          theme.STATUS["bad"] if total["gap"] < 0 else theme.STATUS["good"]),
         ("Need to hire", total["need"],
-         f'shortfalls only · −{n(total["adp"])} ADP · +{n(total["ftap"])} FTAP',
-         "🎯", theme.STATUS["warn"]),
+         f'shortfalls only, {n(total["adp"])} ADP deducted', "🎯",
+         theme.STATUS["warn"]),
         ("In process", total["ongoing"], f"active {periode}", "⏳",
          theme.STATUS["warn"]),
     ]
@@ -1454,18 +1459,24 @@ def page_division():
         "<b>MPP</b> comes from the <i>MPP2</i> tab and <b>Actual</b> from "
         "<i>Existing Employee</i> — the same tabs the team's own "
         "<i>Summary by Division</i> sheet uses. <b>ADP</b> counts people already "
-        "acting in the role, and <b>FTAP</b> counts Future Talent Acceleration "
-        "Program employees — they sit under Human Capital Management in the "
-        "employee list, so they are inside that Actual without filling a budgeted "
-        "position. Hence <b>Need to hire</b> = MPP − Actual − ADP + FTAP, never "
-        "below zero — the same arithmetic as the team\u2019s own sheet, with the "
-        "sign flipped so the number reads as \"hire this many more\". The "
+        "acting in the role, so <b>Need to hire</b> = MPP − Actual − ADP, never below "
+        "zero — the same arithmetic as the team\u2019s own sheet, with the sign "
+        "flipped so the number reads as \"hire this many more\". <b>FTAP</b> is "
+        "informational: how many of that Actual are Future Talent Acceleration "
+        "Program participants. It no longer moves Need to hire, because each one "
+        "now carries their own budget in MPP2. The "
         "four process groups read the <b>Result</b> column of each stage, exactly "
         "like the team\u2019s sheet: <b>On progress</b> and <b>Passed</b> count "
         "only candidates whose process is still live (the <b>Process status</b> "
-        "filter, <i>In process</i> by default), while <b>Failed</b> ignores that "
-        "filter because a failed candidate is never in process. MCU reads the "
-        "FU MCU result — that is where FIT TO WORK is recorded. A candidate "
+        "filter, <i>In process</i> by default). With only <i>In process</i> "
+        "selected the <b>Failed</b> column follows the sheet formula letter for "
+        "letter, guards included: it stays at zero while everyone who passed the "
+        "previous stage is already recorded here, and only lights up where the "
+        "chain is broken. Pick any other status and all three columns switch to "
+        "the real result vocabulary — DECLINE and WITHDRAWN at Offering, UNFIT "
+        "at MCU. MCU reads the FU MCU result, which is where FIT TO WORK is "
+        "recorded. <b>FTAP</b> positions are counted into the division their "
+        "name points at, and appear as their own level rows. A candidate "
         "counts in the period "
         f"({periode}) when their own activity window overlaps it, so someone who "
         "entered in June and is still at MCU today is still counted; MPP, Actual "

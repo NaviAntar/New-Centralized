@@ -691,34 +691,46 @@ tebakan dari kode posisi, dan isinya sudah tersaring (tidak ada End Date).
 ditempatkan di level yang sedang dia duduki (kolom `Level Acting`), bukan level
 asalnya — yang berkurang kebutuhannya adalah posisi yang sedang dia isi.
 
-**Need to hire** = `MPP − Actual − ADP + FTAP`, minimal nol. Sheet aslinya
-menulis angka ini bertanda terbalik (`ADP + Gap − FTAP`, negatif berarti
-kurang); di portal tandanya dibalik supaya kolom bernama "Need to hire" berisi
-angka yang benar-benar berarti "rekrut sekian orang lagi".
+**Need to hire** = `MPP − Actual − ADP`, minimal nol. Sheet menulisnya
+bertanda terbalik (`ADP + Gap`, negatif berarti kurang); di portal tandanya
+dibalik supaya kolom bernama "Need to hire" berisi angka yang benar-benar
+berarti "rekrut sekian orang lagi". ADP mengurangi karena orangnya sudah
+menempati posisi itu sebagai acting.
 
-ADP mengurangi karena orangnya sudah menempati posisi itu sebagai acting. FTAP
-**menambah** karena mereka ikut terhitung di Actual padahal tidak mengisi posisi
-yang dianggarkan — tanpa dikembalikan, kebutuhan rekrut HCM terlihat jauh lebih
-kecil dari kenyataannya.
+**FTAP tidak ikut dalam rumus ini** (sejak 11 Sep 2026). Sheet mengurangkannya,
+dan portal sempat menambahkannya kembali, karena dulu peserta FTAP terhitung di
+Actual sebuah divisi tanpa punya posisi yang dianggarkan. Sejak budget FTAP
+masuk ke MPP2, tiap peserta sudah punya anggarannya sendiri di divisi tujuannya
+— MPP dan Actual-nya saling menutup, dan menambahkan FTAP sekali lagi akan
+menghitung orang yang sama dua kali. Kolom FTAP sekarang murni keterangan:
+berapa dari Actual itu peserta program.
 
-Contoh HCM BCP: MPP 39, Actual 66, ADP 1, FTAP 41 → 39 − 66 − 1 + 41 = **13**.
-Terbaca: 66 orang di HCM, 41 di antaranya anak FTAP, jadi yang benar-benar
-mengisi posisi hanya 25 dari 39 yang dianggarkan.
+### Kolom proses: dua mode
 
-**FTAP adalah KOLOM, bukan divisi.** Karyawan Future Talent Acceleration
-Program tercatat di divisi Human Capital Management di daftar karyawan, dan
-Position Name mereka selalu diawali `FTAP`. Mereka **tetap dihitung di HCM** dan
-tampil sebagai kolom tersendiri — sama persis dengan sheet.
+**Mode "In process"** (bawaan) mengikuti rumus sheet **huruf per huruf**,
+termasuk dua penjaganya:
 
-Sempat (8 Sep 2026) dipisah jadi divisi sendiri supaya HCM tidak terlihat
-kelebihan orang. Itu ternyata **satu-satunya penyebab angka portal meleset dari
-rumus Excel**: MPP BCP jadi 3.080 padahal sheet 3.039, dan Actual HCM jadi 25
-padahal sheet 66. Dikembalikan 10 Sep 2026 — satu sumber, satu cara hitung,
-satu hasil.
+```
+Failed = if( rantai tahap ini cocok di tingkat total ; 0 ;
+             if( On Progress + Passed baris ini = 0 ; 0 ;
+                 COUNTIFS(Result = "Failed" ; departemen ; site ;
+                          tanggal mulai tahap dalam periode) ) )
+```
 
-Bedanya dengan sheet: di sana angka FTAP diketik manual (BCP 15, KCP 9, ACP 4),
-di portal diturunkan dari Position Name sehingga ikut bertambah sendiri saat
-program menerima orang baru (BCP 41, KCP 33, ACP 15 per 10 Sep 2026).
+Yang sedang diproses memang tidak punya kegagalan: selama semua yang lulus tahap
+sebelumnya sudah tercatat di tahap ini, kolomnya nol. Angka baru muncul kalau
+rantainya bolong — di situlah Failed berfungsi sebagai penanda, bukan sebagai
+hitungan kegagalan. Karena rumusnya mencari kata "Failed" apa adanya, kolom
+Offering dan MCU memang selalu nol di mode ini (kolom Result-nya menulis DECLINE
+dan UNFIT, bukan Failed) — sama persis dengan sheet.
+
+Angka 11 Sep 2026, 1–11 Sep: Interview User 17 / 88 / 24 · Psychotest 33 / 51 /
+1 · Offering 19 / 33 / 0 · MCU 26 / 6 / 0.
+
+**Mode status lain** — begitu Closed / Failed / On hold / Backup ikut dipilih,
+penjaga rantai tidak berlaku lagi (yang ditanya bukan lagi "sekarang di mana
+orangnya") dan ketiga kolom memakai kosakata hasil yang sebenarnya: DECLINE dan
+WITHDRAWN di Offering, UNFIT di MCU — nilai yang di sheet luput terhitung.
 
 ### Rekonsiliasi terhadap sheet (10 Sep 2026)
 

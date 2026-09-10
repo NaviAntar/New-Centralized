@@ -1852,16 +1852,46 @@ def estimate_all(sf: pd.DataFrame, df: pd.DataFrame,
 # seluruh divisi sama persis kecuali dua yang selisih satu orang karena snapshot
 # sheet-nya beda hari.
 def prepare_reforecast(df: pd.DataFrame) -> pd.DataFrame:
-    """Rapikan MPP Reforecast jadi (site, divisi, level, status, mpp)."""
+    """Rapikan MPP2 jadi (site, divisi, level_code, status, mpp, budget, ftap).
+
+    Tiga hal yang dibereskan di sini, semuanya arahan Navi 11 Sep 2026:
+
+    1. **Reforecast kosong memakai Budget.** 17 baris di MPP2 — hampir semuanya
+       FTAP di BCP dan KCP — hanya diisi Budget, kolom Reforecast-nya dibiarkan
+       kosong. Membacanya sebagai nol membuang 74 headcount yang sudah
+       dianggarkan, dan itulah sebabnya budget FTAP "kok kayak gak terhitung".
+       Reforecast kosong artinya rencananya belum direvisi, jadi budget aslinya
+       yang berlaku.
+    2. **Posisi FTAP dihitung ke divisi tujuannya**, dibaca dari nama posisinya
+       ("FTAP - Cost Control" -> Project Control). Di kolom Divisi semuanya
+       tertulis Human Capital Management, dan itu membuat HCM tampak jauh lebih
+       besar sementara divisi tujuannya kehilangan anggarannya.
+    3. **Divisi yang digabung** disatukan namanya (Warehouse -> Supply Chain
+       Management, Digital Transformation + Information Technology).
+    """
     d = df.copy()
     d.columns = [str(c).strip() for c in d.columns]
+
+    reforecast = pd.to_numeric(d["Reforecast"], errors="coerce")
+    budget = pd.to_numeric(d.get("Budget"), errors="coerce")
+    divisi = d["Divisi"].astype(str).str.strip()
+    posisi = d.get("Position Name")
+    ftap = (posisi.astype(str).str.strip().str.upper()
+            .str.startswith(C.FTAP_POSITION_PREFIX)
+            if posisi is not None else pd.Series(False, index=d.index))
+    if posisi is not None:
+        divisi = pd.Series(
+            [C.ftap_division(p, dv) if f else dv
+             for p, dv, f in zip(posisi, divisi, ftap)], index=d.index)
+
     out = pd.DataFrame({
         "site": d["Loc"].astype(str).str.strip().str.upper(),
-        "divisi": d["Divisi"].astype(str).str.strip(),
+        "divisi": divisi.map(C.merge_division),
         "level_code": d["Level Code"].astype(str).str.strip(),
         "status": d["Status"].astype(str).str.strip(),
-        "mpp": pd.to_numeric(d["Reforecast"], errors="coerce").fillna(0),
-        "budget": pd.to_numeric(d.get("Budget"), errors="coerce").fillna(0),
+        "mpp": reforecast.fillna(budget).fillna(0),
+        "budget": budget.fillna(0),
+        "ftap": ftap.fillna(False),
     })
     return out[out["divisi"].notna() & ~out["divisi"].isin(["nan", ""])]
 
@@ -1911,9 +1941,17 @@ def prepare_headcount(emp: pd.DataFrame, kode_divisi: dict | None = None) -> pd.
             .str.startswith(C.FTAP_POSITION_PREFIX)
             if posisi is not None else pd.Series(False, index=d.index))
 
+    # Peserta FTAP dihitung ke divisi tujuannya, dibaca dari nama posisinya —
+    # sama persis dengan yang dilakukan pada MPP, supaya rencana dan isinya
+    # berdiri di divisi yang sama. Divisi yang digabung disatukan setelahnya.
+    if posisi is not None:
+        divisi = pd.Series(
+            [C.ftap_division(p, dv) if f else dv
+             for p, dv, f in zip(posisi, divisi, ftap)], index=d.index)
+
     out = pd.DataFrame({
         "site": site,
-        "divisi": divisi,
+        "divisi": divisi.map(C.merge_division),
         "level_code": lvl,
         "status": lvl.map(lambda v: "Non Staff" if pd.notna(v) and v >= 11
                           else "Staff" if pd.notna(v) else None),
@@ -1933,7 +1971,10 @@ def prepare_adp(adp: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=["site", "divisi", "status"])
     d = adp.copy()
     d["site"] = d["site"].astype(str).str.strip().str.upper()
-    d["divisi"] = d["divisi"].astype(str).str.strip()
+    # Penggabungan divisi ikut diterapkan, kalau tidak orang ADP di Warehouse
+    # dan Information Technology tidak akan cocok dengan nama divisi mana pun
+    # setelah keduanya dilebur, dan hilang begitu saja dari kolom ADP.
+    d["divisi"] = d["divisi"].astype(str).str.strip().map(C.merge_division)
     return d
 
 
@@ -2023,16 +2064,48 @@ def _hasil_tahap(sf: pd.DataFrame, tahap: str) -> pd.DataFrame:
     return out[out["_o"].notna()]
 
 
+def _dalam_periode(d: pd.DataFrame, mulai, akhir) -> pd.Series:
+    """Baris yang tanggal MULAI tahapnya jatuh dalam periode. Kosong = semua."""
+    if mulai is None and akhir is None:
+        return pd.Series(True, index=d.index)
+    t = d["start"]
+    ada = t.notna()
+    if mulai is not None:
+        ada &= t >= pd.Timestamp(mulai).normalize()
+    if akhir is not None:
+        ada &= t <= pd.Timestamp(akhir).normalize()
+    return ada
+
+
 def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
-                      statuses=None) -> pd.DataFrame:
+                      statuses=None, mulai=None, akhir=None) -> pd.DataFrame:
     """On Progress / Passed / Failed per grup untuk PROCESS_STAGES.
 
     `grup`: Series ber-index cand_key, isinya label grup (divisi, level, dsb).
-    `statuses`: status proses yang dihitung sebagai "masih berjalan" untuk kolom
-    On Progress dan Passed. Kosong/None berarti STATUS_BERJALAN ("OPEN"), sama
-    dengan yang dipatok sheet.
+    `statuses`: status proses yang dihitung. Kosong/None berarti STATUS_BERJALAN
+    ("OPEN"), sama dengan yang dipatok sheet.
 
-    Hasilnya satu baris per label, kolom rata: iu_progress, iu_passed, ...
+    **Dua mode, dan itu memang disengaja** (arahan Navi, 11 Sep 2026):
+
+    *Mode "sedang berjalan"* — hanya OPEN yang dipilih. Kolom Failed mengikuti
+    rumus sheet HURUF PER HURUF, termasuk dua penjaganya:
+
+        Failed = if( rantai tahap ini cocok di tingkat total ; 0 ;
+                     if( On Progress + Passed baris ini = 0 ; 0 ;
+                         COUNTIFS(Result = "Failed" ; departemen ; site ;
+                                  tanggal mulai tahap dalam periode) ) )
+
+    Yang sedang diproses memang tidak punya kegagalan: kalau semua yang lulus
+    tahap sebelumnya sudah tercatat di tahap ini, tidak ada yang hilang, dan
+    kolomnya nol. Angka baru muncul kalau rantainya bolong — di situlah Failed
+    berfungsi sebagai penanda, bukan sebagai hitungan kegagalan.
+
+    *Mode status lain* — begitu Closed / Failed / On hold / Backup ikut dipilih,
+    penjaga rantai tidak berlaku lagi (yang ditanya bukan lagi "sekarang di mana
+    orangnya") dan ketiga kolom memakai kosakata hasil yang sebenarnya:
+    DECLINE dan WITHDRAWN di Offering, UNFIT di MCU — nilai yang di sheet luput
+    terhitung karena rumusnya mencari kata "Failed" yang memang tidak pernah
+    ditulis di kolom itu.
     """
     kolom = [f"{sl}_{k}" for sl in PROCESS_SLUG.values() for k in PROCESS_KINDS]
     kosong = pd.DataFrame(columns=["_grup"] + kolom)
@@ -2040,28 +2113,60 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
         return kosong
 
     mau = {str(s).strip().upper() for s in (statuses or STATUS_BERJALAN)}
+    mode_berjalan = mau == set(STATUS_BERJALAN)
     stat = df.drop_duplicates("cand_key").set_index("cand_key")["status1"]
     stat = stat.astype(str).str.strip().str.upper()
 
-    baris = []
+    hit = {}      # tahap -> DataFrame(cand_key, _o)
+    total = {}    # tahap -> {"progress": n, "passed": n}
     for tahap in PROCESS_STAGES:
-        h = _hasil_tahap(sf, tahap)
-        if h.empty:
+        sumber = PROCESS_RESULT_STAGE.get(tahap, tahap)
+        d = sf[sf["stage"] == sumber]
+        if d.empty or "result" not in d.columns:
+            hit[tahap] = pd.DataFrame(columns=["cand_key", "_o", "_grup"])
+            total[tahap] = {"progress": 0, "passed": 0}
             continue
-        h = h.copy()
+        r = d["result"].astype(str).str.strip().str.upper()
+        o = pd.Series(pd.NA, index=d.index, dtype=object)
+        o = o.mask(r.isin(PROCESS_PROGRESS), "progress")
+        o = o.mask(r.isin(PROCESS_PASSED[tahap]), "passed")
+        if mode_berjalan:
+            # Sheet mencari kata "Failed" apa adanya, dan hanya di dalam periode.
+            o = o.mask(r.isin({"FAILED", "FAIL"}) & _dalam_periode(d, mulai, akhir),
+                       "failed")
+        else:
+            o = o.mask(r.isin(PROCESS_FAILED[tahap]), "failed")
+
+        h = pd.DataFrame({"cand_key": d["cand_key"], "_o": o})
+        h = h[h["_o"].notna()]
         h["_grup"] = h["cand_key"].map(grup)
         h = h[h["_grup"].notna()]
-        if h.empty:
-            continue
         h["_st"] = h["cand_key"].map(stat)
-        # On Progress & Passed: hanya yang prosesnya masih berjalan.
-        # Failed: apa adanya — kandidat gagal statusnya FAILED, menyaringnya ke
+        # On Progress & Passed hanya untuk status yang dipilih. Failed dibiarkan
+        # lolos: kandidat yang gagal statusnya FAILED, jadi menyaringnya ke
         # "masih berjalan" akan selalu menghasilkan nol.
-        jalan = h["_st"].isin(mau)
-        h = h[jalan | h["_o"].eq("failed")]
-        h["_tahap"] = tahap
-        baris.append(h)
+        h = h[h["_st"].isin(mau) | h["_o"].eq("failed")]
+        hit[tahap] = h
+        total[tahap] = {
+            k: int(h.loc[h["_o"] == k, "cand_key"].nunique())
+            for k in ("progress", "passed")
+        }
 
+    # Penjaga rantai: kalau yang lulus di tahap sebelumnya sudah tercatat
+    # seluruhnya di tahap ini, kolom Failed tahap ini nol. Hanya berlaku di mode
+    # "sedang berjalan" — persis seperti rumus sheet.
+    nol_karena_rantai = set()
+    if mode_berjalan:
+        for a, b in PROCESS_CHAIN:
+            if total[a]["passed"] == total[b]["progress"] + total[b]["passed"]:
+                nol_karena_rantai.add(b)
+
+    baris = []
+    for tahap, h in hit.items():
+        if len(h):
+            h = h.copy()
+            h["_tahap"] = tahap
+            baris.append(h[["cand_key", "_o", "_grup", "_tahap"]])
     if not baris:
         return kosong
     semua = pd.concat(baris, ignore_index=True)
@@ -2076,6 +2181,13 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
             except KeyError:
                 kol = pd.Series(0, index=out.index)
             out[f"{sl}_{k}"] = kol.reindex(out.index).fillna(0).astype(int)
+        if tahap in nol_karena_rantai:
+            out[f"{sl}_failed"] = 0
+        elif mode_berjalan:
+            # Penjaga kedua: baris yang tidak punya seorang pun di tahap ini
+            # tidak boleh tiba-tiba menampilkan kegagalan.
+            sepi = (out[f"{sl}_progress"] + out[f"{sl}_passed"]) == 0
+            out.loc[sepi, f"{sl}_failed"] = 0
     return out.reset_index().rename(columns={"index": "_grup"})
 
 
@@ -2125,20 +2237,24 @@ def process_chain(sf: pd.DataFrame, df: pd.DataFrame, cand_keys=None,
 def _need_to_hire(out: pd.DataFrame) -> pd.Series:
     """Berapa orang yang masih harus direkrut dari luar.
 
-    Sheet menulisnya `ADP + Gap − FTAP` (Gap = Actual − MPP, negatif berarti
-    kurang orang). Di portal tandanya dibalik supaya kolom bernama "Need to
-    hire" berisi angka yang benar-benar berarti "rekrut sekian orang lagi":
+        MPP − Actual − ADP,  minimal nol
 
-        MPP − Actual − ADP + FTAP,  minimal nol
+    Sheet menulisnya bertanda terbalik (`ADP + Gap`, Gap = Actual − MPP, negatif
+    berarti kurang orang). Di portal tandanya dibalik supaya kolom bernama "Need
+    to hire" berisi angka yang benar-benar berarti "rekrut sekian orang lagi".
 
     ADP mengurangi karena orangnya sudah menempati posisi itu sebagai acting.
-    FTAP MENAMBAH karena mereka ikut terhitung di Actual padahal tidak mengisi
-    posisi yang dianggarkan — tanpa dikembalikan, kebutuhan rekrut divisi itu
-    terlihat lebih kecil dari kenyataannya.
+
+    **FTAP tidak lagi ikut dalam rumus ini.** Sheet mengurangkannya, dan portal
+    sempat menambahkannya kembali, karena dulu peserta FTAP terhitung di Actual
+    sebuah divisi tanpa punya posisi yang dianggarkan. Sejak budget FTAP masuk
+    ke MPP2 (11 Sep 2026), tiap peserta sudah punya anggarannya sendiri di
+    divisi tujuannya — MPP dan Actual-nya saling menutup, dan menambahkan FTAP
+    sekali lagi akan menghitung orang yang sama dua kali. Kolom FTAP sekarang
+    murni keterangan: berapa dari Actual itu peserta program.
     """
-    ftap = out["ftap"] if "ftap" in out.columns else 0
     adp = out["adp"] if "adp" in out.columns else 0
-    return (out["mpp"] - out["actual"] - adp + ftap).clip(lower=0)
+    return (out["mpp"] - out["actual"] - adp).clip(lower=0)
 
 
 def _hitung_ftap(hc: pd.DataFrame, kunci: str) -> pd.Series:
@@ -2249,12 +2365,19 @@ def level_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
     # Dikelompokkan berdasarkan NAMA level, bukan kodenya: level 7 dan 6 sama-sama
     # "Manager", dan menampilkannya sebagai dua baris Manager yang berbeda hanya
     # membingungkan pembaca yang tidak tahu kode di baliknya.
+    # Nama level dihitung dengan penanda FTAP: peserta program dapat barisnya
+    # sendiri ("FTAP Non Staff") supaya tidak tercampur dengan karyawan tetap di
+    # level yang sama.
     r = r.copy()
-    r["_k"] = r["level_code"].map(C.level_name)
+    r["_k"] = [C.level_name(k, bool(f))
+               for k, f in zip(r["level_code"], r.get("ftap", False)
+                               if "ftap" in r.columns else [False] * len(r))]
     mpp = r.groupby("_k")["mpp"].sum()
 
     h = h.copy()
-    h["_k"] = h["level_code"].map(C.level_name)
+    h["_k"] = [C.level_name(k, bool(f))
+               for k, f in zip(h["level_code"], h.get("ftap", False)
+                               if "ftap" in h.columns else [False] * len(h))]
     aktual = h.groupby("_k").size()
 
     pipe = None
@@ -2294,16 +2417,17 @@ def level_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
     out.index.name = "level"
     out = out.reset_index()
 
-    # Urutan tampil mengikuti LEVEL_ORDER, dari level paling bawah ke paling atas.
-    urut = {}
-    for i, k in enumerate(C.LEVEL_ORDER):
-        urut.setdefault(C.level_name(k), i)
+    # Urutan tampil mengikuti LEVEL_NAME_ORDER, dari level paling bawah ke
+    # paling atas, dengan dua baris FTAP tepat di atas padanan tetapnya.
+    urut = {nama: i for i, nama in enumerate(C.LEVEL_NAME_ORDER)}
     out["_u"] = out["level"].map(lambda v: urut.get(v, 99))
     # Kode level pertama yang memakai nama itu — dipakai menyaring saat detail
     # level dibuka.
     kode_pertama = {}
     for k in C.LEVEL_ORDER:
         kode_pertama.setdefault(C.level_name(k), k)
+    kode_pertama[C.FTAP_LEVEL_NON_STAFF] = 11
+    kode_pertama[C.FTAP_LEVEL_STAFF] = 10
     out["level_code"] = out["level"].map(kode_pertama)
     return out.sort_values("_u").drop(columns="_u").reset_index(drop=True)
 
