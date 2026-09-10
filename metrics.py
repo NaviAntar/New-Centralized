@@ -1952,73 +1952,86 @@ def _pipeline_per_grup(df: pd.DataFrame, kunci: list[str]) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Sebaran per proses — On Progress / Passed / Failed untuk empat tahap kunci
 # ---------------------------------------------------------------------------
-# Navi minta Summary by Division bisa digeser ke kanan sampai kelihatan
-# "Interview User berapa, Psikotest berapa, Offering berapa, MCU berapa", tiap
-# tahap dipecah tiga. Empat tahap ini yang dipilih karena di situlah kandidat
-# paling sering tertahan — Screening CV terlalu di depan (hampir semua orang
-# lewat), Onboarding terlalu di belakang (sudah jadi angka hired).
+# Dihitung PERSIS seperti tab "Copy of Summary by Division" milik tim, supaya
+# angka portal dan angka sheet tidak mungkin berbeda (arahan Navi, 10 Sep 2026).
+# Rumus aslinya, untuk tiap tahap:
+#
+#   On Progress = COUNTIFS(Result = "On Progress"; Departemen; STATUS = "OPEN"; Loc)
+#   Passed      = COUNTIFS(Result = <nilai lulus tahap itu>; Departemen; STATUS = "OPEN"; Loc)
+#   Failed      = COUNTIFS(Result = gagal; Departemen; Loc; tanggal mulai tahap dalam periode)
+#
+# Dua hal yang sengaja TIDAK simetris, dan itu memang benar:
+#
+#   1. On Progress dan Passed hanya menghitung kandidat yang prosesnya MASIH
+#      BERJALAN. Keduanya menjawab "sekarang orangnya ada di mana", dan itu
+#      hanya berlaku untuk orang yang masih bergerak. Versi portal sebelumnya
+#      menghitung semua status — hasilnya Passed di Interview User 1.018 padahal
+#      sheet menulis 88, karena 930 sisanya kandidat yang prosesnya sudah lama
+#      selesai atau gagal di tahap berikutnya.
+#   2. Failed TIDAK ikut disaring status, karena kandidat yang gagal statusnya
+#      FAILED — menyaringnya ke "masih berjalan" akan selalu menghasilkan nol.
+#
+# Yang juga diperbaiki: keadaan tahap dibaca dari KOLOM RESULT saja. Versi
+# sebelumnya menebak dari tanggal kalau Result kosong ("sudah lewat tahap ini
+# berarti lulus"), dan tebakan itulah yang menggelembungkan angkanya.
 PROCESS_STAGES = ["Interview User", "Psychotest", "Offering", "MCU"]
 PROCESS_SLUG = {"Interview User": "iu", "Psychotest": "psy",
                 "Offering": "off", "MCU": "mcu"}
 PROCESS_KINDS = ["progress", "passed", "failed"]
 
-# Kolom Result tiap tahap memakai kosakata yang berbeda-beda: Interview User
-# menulis PASSED/FAILED, Offering menulis ACCEPTED/DECLINE/WITHDRAWN. Dipetakan
-# ke tiga keadaan yang sama supaya kolomnya bisa dibaca berdampingan.
-_HASIL_LULUS = {"PASSED", "PASS", "ACCEPTED", "ACCEPT", "LULUS", "TALENT POOL"}
-_HASIL_GAGAL = {"FAILED", "FAIL", "DECLINE", "DECLINED", "REJECTED", "REJECT",
-                "WITHDRAWN", "WITHDRAW", "TIDAK LULUS", "CANCEL", "CANCELLED"}
-_HASIL_JALAN = {"ON PROGRESS", "ONPROGRESS", "PROGRESS", "HOLD", "PENDING",
-                "SCHEDULED", "RESCHEDULE"}
+# Kolom Result yang dibaca tiap tahap. MCU adalah pengecualian: tahap "MCU"
+# sendiri tidak punya kolom Result di sumber mana pun — hasil pemeriksaan
+# kesehatan tercatat di `result_fu_mcu` (FIT TO WORK / UNFIT / WITHDRAWN).
+# Sheet tim juga membacanya dari situ, hanya kolomnya diberi judul "RESULT MCU".
+PROCESS_RESULT_STAGE = {"Interview User": "Interview User",
+                        "Psychotest": "Psychotest",
+                        "Offering": "Offering",
+                        "MCU": "FU MCU"}
+
+# Tiap tahap memakai kosakata sendiri untuk "lulus" dan "gagal".
+PROCESS_PASSED = {
+    "Interview User": {"PASSED", "PASS"},
+    "Psychotest": {"PASSED", "PASS"},
+    "Offering": {"ACCEPTED", "ACCEPT"},
+    "MCU": {"FIT TO WORK", "FIT"},
+}
+PROCESS_FAILED = {
+    "Interview User": {"FAILED", "FAIL"},
+    "Psychotest": {"FAILED", "FAIL"},
+    "Offering": {"DECLINE", "DECLINED", "REJECTED", "REJECT", "WITHDRAWN"},
+    "MCU": {"UNFIT", "WITHDRAWN"},
+}
+PROCESS_PROGRESS = {"ON PROGRESS", "ONPROGRESS", "ON-PROGRESS"}
+
+# Status proses yang dianggap "masih berjalan" — dasar kolom On Progress dan
+# Passed kalau pemanggil tidak menyebut apa-apa.
+STATUS_BERJALAN = ("OPEN",)
 
 
-def stage_outcome(sf: pd.DataFrame, df: pd.DataFrame) -> pd.Series:
-    """Keadaan tiap (kandidat, tahap): 'progress' / 'passed' / 'failed' / NA.
-
-    Dua sumber, dengan urutan yang jelas:
-      1. Kolom Result kalau tahapnya punya — itu keputusan yang ditulis manusia.
-      2. Kalau tidak ada (MCU tidak punya kolom Result sama sekali, dan tahap
-         lain pun sering dikosongkan), keadaannya disimpulkan dari TANGGAL:
-         sudah mulai belum selesai = berjalan; sudah selesai dan kandidat
-         lanjut ke tahap berikutnya = lulus; sudah selesai, tidak lanjut, dan
-         kandidatnya FAILED = gagal di sini.
-
-    Tahap yang belum pernah disentuh sama sekali menghasilkan NA — bukan nol —
-    supaya "belum sampai ke sini" tidak tercampur dengan "sampai sini lalu
-    gagal".
-    """
-    d = sf
-    hasil = pd.Series(pd.NA, index=d.index, dtype=object)
-
-    res = d["result"].astype(str).str.strip().str.upper() if "result" in d else None
-    if res is not None:
-        hasil = hasil.mask(res.isin(_HASIL_LULUS), "passed")
-        hasil = hasil.mask(res.isin(_HASIL_GAGAL), "failed")
-        hasil = hasil.mask(res.isin(_HASIL_JALAN), "progress")
-
-    disentuh = d["start"].notna() | d["end"].notna()
-    berjalan = d["start"].notna() & d["end"].isna()
-    hasil = hasil.mask(hasil.isna() & berjalan, "progress")
-
-    # Tahap terjauh yang punya tanggal, per kandidat: dipakai menilai apakah
-    # kandidat benar-benar melewati tahap ini atau berhenti di sini.
-    terjauh = d[disentuh].groupby("cand_key")["stage_no"].max()
-    lanjut = d["cand_key"].map(terjauh) > d["stage_no"]
-
-    stat = d["cand_key"].map(df.drop_duplicates("cand_key")
-                             .set_index("cand_key")["status1"])
-    selesai = d["end"].notna() & hasil.isna()
-    hasil = hasil.mask(selesai & lanjut, "passed")
-    hasil = hasil.mask(selesai & ~lanjut & stat.eq("FAILED"), "failed")
-    hasil = hasil.mask(selesai & ~lanjut & ~stat.eq("FAILED"), "passed")
-    return hasil
+def _hasil_tahap(sf: pd.DataFrame, tahap: str) -> pd.DataFrame:
+    """Baris (cand_key, hasil) untuk satu tahap proses, dibaca dari Result."""
+    sumber = PROCESS_RESULT_STAGE.get(tahap, tahap)
+    d = sf[sf["stage"] == sumber]
+    if d.empty or "result" not in d.columns:
+        return pd.DataFrame(columns=["cand_key", "_o"])
+    r = d["result"].astype(str).str.strip().str.upper()
+    o = pd.Series(pd.NA, index=d.index, dtype=object)
+    o = o.mask(r.isin(PROCESS_PROGRESS), "progress")
+    o = o.mask(r.isin(PROCESS_PASSED[tahap]), "passed")
+    o = o.mask(r.isin(PROCESS_FAILED[tahap]), "failed")
+    out = pd.DataFrame({"cand_key": d["cand_key"], "_o": o})
+    return out[out["_o"].notna()]
 
 
-def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame,
-                      grup: pd.Series) -> pd.DataFrame:
-    """Hitung On Progress / Passed / Failed per grup untuk PROCESS_STAGES.
+def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
+                      statuses=None) -> pd.DataFrame:
+    """On Progress / Passed / Failed per grup untuk PROCESS_STAGES.
 
     `grup`: Series ber-index cand_key, isinya label grup (divisi, level, dsb).
+    `statuses`: status proses yang dihitung sebagai "masih berjalan" untuk kolom
+    On Progress dan Passed. Kosong/None berarti STATUS_BERJALAN ("OPEN"), sama
+    dengan yang dipatok sheet.
+
     Hasilnya satu baris per label, kolom rata: iu_progress, iu_passed, ...
     """
     kolom = [f"{sl}_{k}" for sl in PROCESS_SLUG.values() for k in PROCESS_KINDS]
@@ -2026,26 +2039,87 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame,
     if grup is None or not len(grup) or sf.empty:
         return kosong
 
-    d = sf[sf["stage"].isin(PROCESS_STAGES)].copy()
-    if d.empty:
-        return kosong
-    d["_o"] = stage_outcome(d, df)
-    d["_grup"] = d["cand_key"].map(grup)
-    d = d[d["_grup"].notna() & d["_o"].notna()]
-    if d.empty:
-        return kosong
+    mau = {str(s).strip().upper() for s in (statuses or STATUS_BERJALAN)}
+    stat = df.drop_duplicates("cand_key").set_index("cand_key")["status1"]
+    stat = stat.astype(str).str.strip().str.upper()
 
-    tabel = (d.groupby(["_grup", "stage", "_o"])["cand_key"].nunique()
-              .unstack(fill_value=0))
-    out = pd.DataFrame(index=sorted(d["_grup"].unique()))
+    baris = []
+    for tahap in PROCESS_STAGES:
+        h = _hasil_tahap(sf, tahap)
+        if h.empty:
+            continue
+        h = h.copy()
+        h["_grup"] = h["cand_key"].map(grup)
+        h = h[h["_grup"].notna()]
+        if h.empty:
+            continue
+        h["_st"] = h["cand_key"].map(stat)
+        # On Progress & Passed: hanya yang prosesnya masih berjalan.
+        # Failed: apa adanya — kandidat gagal statusnya FAILED, menyaringnya ke
+        # "masih berjalan" akan selalu menghasilkan nol.
+        jalan = h["_st"].isin(mau)
+        h = h[jalan | h["_o"].eq("failed")]
+        h["_tahap"] = tahap
+        baris.append(h)
+
+    if not baris:
+        return kosong
+    semua = pd.concat(baris, ignore_index=True)
+    tabel = (semua.groupby(["_grup", "_tahap", "_o"])["cand_key"].nunique()
+                  .unstack(fill_value=0))
+
+    out = pd.DataFrame(index=sorted(semua["_grup"].unique()))
     for tahap, sl in PROCESS_SLUG.items():
         for k in PROCESS_KINDS:
             try:
-                kol = tabel.xs(tahap, level="stage")[k]
+                kol = tabel.xs(tahap, level="_tahap")[k]
             except KeyError:
                 kol = pd.Series(0, index=out.index)
             out[f"{sl}_{k}"] = kol.reindex(out.index).fillna(0).astype(int)
     return out.reset_index().rename(columns={"index": "_grup"})
+
+
+# Rantai yang dicek sheet: yang lulus di satu tahap HARUS muncul di tahap
+# berikutnya. Rumus Failed di sheet menuliskannya secara harfiah —
+# `if(sum(Psychotest OnProg:Passed) = Interview User Passed; 0; …)` — jadi
+# selisih nol berarti tidak ada orang yang hilang dari monitoring di antara dua
+# tahap itu, dan selisih bukan nol menunjuk persis di mana pencatatannya bolong.
+PROCESS_CHAIN = [("Interview User", "Psychotest"),
+                 ("Psychotest", "Offering"),
+                 ("Offering", "MCU")]
+
+
+def process_chain(sf: pd.DataFrame, df: pd.DataFrame, cand_keys=None,
+                  statuses=None) -> list[dict]:
+    """Cek rantai antar tahap: yang lulus di tahap A vs yang tercatat di tahap B.
+
+    Mengembalikan [{"dari", "ke", "lulus", "tercatat", "selisih"}]. `selisih`
+    positif berarti ada orang yang sudah lulus tahap A tapi belum punya catatan
+    apa pun di tahap B — bukan berarti mereka gagal, berarti monitoringnya
+    belum diisi.
+    """
+    mau = {str(s).strip().upper() for s in (statuses or STATUS_BERJALAN)}
+    stat = df.drop_duplicates("cand_key").set_index("cand_key")["status1"]
+    stat = stat.astype(str).str.strip().str.upper()
+
+    hit = {}
+    for tahap in PROCESS_STAGES:
+        h = _hasil_tahap(sf, tahap)
+        if cand_keys is not None:
+            h = h[h["cand_key"].isin(cand_keys)]
+        h = h[h["cand_key"].map(stat).isin(mau)]
+        hit[tahap] = {
+            "progress": int(h.loc[h["_o"] == "progress", "cand_key"].nunique()),
+            "passed": int(h.loc[h["_o"] == "passed", "cand_key"].nunique()),
+        }
+
+    hasil = []
+    for a, b in PROCESS_CHAIN:
+        lulus = hit[a]["passed"]
+        tercatat = hit[b]["progress"] + hit[b]["passed"]
+        hasil.append({"dari": a, "ke": b, "lulus": lulus,
+                      "tercatat": tercatat, "selisih": lulus - tercatat})
+    return hasil
 
 
 def _need_to_hire(out: pd.DataFrame) -> pd.Series:

@@ -613,16 +613,24 @@ TALENT_POOL_RESULT = "TALENT POOL"
 BACKUP_LABEL = "Backup candidate"
 
 # Pilihan filter status proses. Label yang dilihat pengguna berbahasa Inggris;
-# nilai di sheet TETAP apa adanya, jadi peta ini yang menjembatani. "TALENT
-# POOL" sengaja tampil sebagai "Backup candidate" — sebutan yang dipakai tim
+# nilai di sheet TETAP apa adanya, jadi peta ini yang menjembatani.
+#
+# "In process" adalah OPEN — prosesnya masih berjalan. Ditulis begitu, bukan
+# "Open", karena di halaman ini "open" mudah terbaca sebagai "posisi yang
+# dibuka" padahal yang dimaksud keadaan prosesnya (arahan Navi, 10 Sep 2026).
+# Urutannya sengaja menaruh In process paling depan: itu nilai bawaan filter,
+# dan itu pula yang dipatok rumus sheet untuk kolom On progress dan Passed.
+#
+# "TALENT POOL" tampil sebagai "Backup candidate" — sebutan yang dipakai tim
 # sejak 6 Sep 2026, sementara rumus di spreadsheet masih menulis TALENT POOL.
 STATUS_OPTIONS = {
-    "Open": "OPEN",
-    "Close": "CLOSE",
+    "In process": "OPEN",
+    "On hold": "HOLD",
+    "Closed": "CLOSE",
     "Failed": "FAILED",
-    "Hold": "HOLD",
     BACKUP_LABEL: TALENT_POOL_RESULT,
 }
+STATUS_DEFAULT = ["In process"]
 
 # Achievement recruiter dipotong di sini. Tanpa batas, orang yang kebetulan
 # memegang satu kandidat cepat bisa tampil 2.000% dan membuat kolomnya tidak

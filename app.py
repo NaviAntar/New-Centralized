@@ -1291,13 +1291,16 @@ def _rekap_divisi(_ref, _hc, _adp, _dfc, _sf, _df, site, mulai, akhir, status=()
     c = _dfc if not site else _dfc[_dfc["site"] == site]
 
     satu = c.drop_duplicates("cand_key")
-    pb_div = M.process_breakdown(_sf, _df, satu.set_index("cand_key")["divisi"])
+    stat = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in (status or ())]
+    pb_div = M.process_breakdown(_sf, _df, satu.set_index("cand_key")["divisi"],
+                                 statuses=stat)
     pb_div = pb_div.set_index("_grup") if len(pb_div) else None
 
     kunci_lvl = (satu["divisi"].astype(str) + " ▸ "
                  + satu["level_code"].map(C.level_name).astype(str))
     pb_lvl = M.process_breakdown(
-        _sf, _df, pd.Series(kunci_lvl.values, index=satu["cand_key"]))
+        _sf, _df, pd.Series(kunci_lvl.values, index=satu["cand_key"]),
+        statuses=stat)
     pb_lvl = pb_lvl.set_index("_grup") if len(pb_lvl) else None
 
     level = {r.divisi: M.level_summary(_ref, _hc, _dfc, r.divisi, site=site,
@@ -1344,10 +1347,13 @@ def page_division():
         {"label": "Active to", "key": "sd_sampai", "kind": "date",
          "value": hari_ini},
         {"label": "Process status", "key": "sd_status", "kind": "multi",
-         "options": list(C.STATUS_OPTIONS), "default": [],
+         "options": list(C.STATUS_OPTIONS), "default": list(C.STATUS_DEFAULT),
          "placeholder": "All statuses",
-         "help": "Status of the recruitment process for that position. Filters "
-                 "the candidate columns; MPP, Actual and ADP do not move."},
+         "help": "Which processes count as live. <In process> is the default "
+                 "and matches the team's sheet: On progress and Passed only "
+                 "count candidates still moving. Failed always ignores this "
+                 "filter — a failed candidate is never in process. MPP, Actual, "
+                 "ADP and FTAP never move."},
     ])
     if isinstance(mulai, (list, tuple)):
         mulai = mulai[0] if mulai else None
@@ -1356,8 +1362,11 @@ def page_division():
     if mulai and akhir and mulai > akhir:
         mulai, akhir = akhir, mulai
 
+    # Rentang tanggal menyaring SIAPA yang dihitung; status menyaring APA yang
+    # dianggap "masih berjalan" di kolom proses. Dua hal berbeda, jadi status
+    # sengaja tidak ikut memotong daftar kandidatnya — kalau ikut, kolom Failed
+    # akan selalu nol saat filternya "In process".
     dsaring = M.filter_date_range(df, sf, mulai, akhir)
-    dsaring = M.filter_status(dsaring, status_p)
     dfc = _cand_divisi(dsaring)
     est = _estimasi_semua(sf, df)
     periode = (f"{pd.Timestamp(mulai):%d %b %Y} – {pd.Timestamp(akhir):%d %b %Y}"
@@ -1451,18 +1460,64 @@ def page_division():
         "position. Hence <b>Need to hire</b> = MPP − Actual − ADP + FTAP, never "
         "below zero — the same arithmetic as the team\u2019s own sheet, with the "
         "sign flipped so the number reads as \"hire this many more\". The "
-        "<b>Process status</b> filter "
-        "narrows the candidate columns the same way the period does. A candidate "
+        "four process groups read the <b>Result</b> column of each stage, exactly "
+        "like the team\u2019s sheet: <b>On progress</b> and <b>Passed</b> count "
+        "only candidates whose process is still live (the <b>Process status</b> "
+        "filter, <i>In process</i> by default), while <b>Failed</b> ignores that "
+        "filter because a failed candidate is never in process. MCU reads the "
+        "FU MCU result — that is where FIT TO WORK is recorded. A candidate "
         "counts in the period "
         f"({periode}) when their own activity window overlaps it, so someone who "
         "entered in June and is still at MCU today is still counted; MPP, Actual "
         "and ADP are today's snapshot, not the period's.", block=True), unsafe_allow_html=True)
 
+    # ── Cek rantai antar tahap. Inilah aturan yang dipatok tim: yang lulus di
+    # satu tahap HARUS sudah tercatat di tahap berikutnya. Sheet menuliskannya
+    # di dalam rumus kolom Failed; di sini dikeluarkan jadi panel tersendiri,
+    # karena kalau angkanya tidak nol yang dibutuhkan bukan angka Failed
+    # melainkan tahu persis di mana pencatatannya bolong.
+    rantai = M.process_chain(sf, df, cand_keys=set(dfc["cand_key"]),
+                             statuses=[C.STATUS_OPTIONS.get(x, str(x).upper())
+                                       for x in status_p])
+    if rantai:
+        st.markdown(theme.section_heading(
+            3, "Pipeline consistency",
+            "everyone who passed a stage must already be recorded at the next one"),
+            unsafe_allow_html=True)
+        with theme.card("sd_rantai", "Stage-to-stage check",
+                        f"{periode} · follows the filters above"):
+            baris_r = []
+            for x in rantai:
+                sel = int(x["selisih"])
+                if sel == 0:
+                    nilai = (f'<span style="color:{theme.STATUS["good"]};'
+                             'font-weight:700">0 — matched</span>')
+                else:
+                    nilai = (f'<span style="color:{theme.STATUS["bad"]};'
+                             f'font-weight:700">{sel:+d}</span>')
+                baris_r.append([
+                    f'{theme.esc(x["dari"])} <b>passed</b>', n(x["lulus"]),
+                    f'{theme.esc(x["ke"])} <b>on progress + passed</b>',
+                    n(x["tercatat"]), nilai])
+            tabel("sd_rantai", "Pipeline consistency", periode,
+                  ["Passed at", "People", "Should appear at", "Recorded", "Gap"],
+                  baris_r, align="lrlrr", max_rows=None)
+            st.markdown(theme.inline_note(
+                "A gap of <b>0</b> means nobody fell out of monitoring between "
+                "those two stages. A <b>positive</b> gap means that many people "
+                "passed the earlier stage but have no result recorded at the "
+                "next one yet — they are not failures, their row simply has not "
+                "been filled in. A <b>negative</b> gap means the later stage has "
+                "more people than the earlier one passed, which usually means a "
+                "result was entered out of order. The same rule sits inside the "
+                "Failed formula of the team\u2019s own sheet.",
+                block=True), unsafe_allow_html=True)
+
     # ── Tingkat ketiga: posisi dan orangnya. Tidak dijadikan baris tabel karena
     # isinya bukan angka melainkan daftar nama, dan daftar nama di dalam kolom
     # angka tidak terbaca. Dipilih lewat dua dropdown supaya tetap dua klik.
     st.markdown(theme.section_heading(
-        3, "Drill down to people", "pick a division, then a level"),
+        4, "Drill down to people", "pick a division, then a level"),
         unsafe_allow_html=True)
 
     punya = [r.divisi for r in div.itertuples() if r.kandidat]
