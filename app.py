@@ -1284,19 +1284,29 @@ def _awal_bulan():
 
 
 @st.cache_data(show_spinner=False, ttl=C.CACHE_TTL_SECONDS)
-def _rekap_divisi(_ref, _hc, _adp, _dfc, _sf, _df, site, mulai, akhir, status=()):
+def _rekap_divisi(_ref, _hc, _adp, _dfc, _dfc_all, _sf, _df, site, mulai, akhir,
+                  status=()):
     """Semua yang dibutuhkan tabel: ringkasan divisi, level tiap divisi, dan
     sebaran prosesnya. Dihitung sekali, bukan per baris.
 
-    `mulai`/`akhir` hanya menyaring KANDIDAT. MPP, Actual, dan ADP adalah potret
-    keadaan hari ini, bukan kejadian dalam rentang waktu — menyaringnya dengan
-    tanggal akan menghasilkan angka yang tidak berarti apa-apa.
+    `mulai`/`akhir` hanya menyaring KANDIDAT. MPP, Actual, ADP, dan FTAP adalah
+    potret keadaan hari ini, bukan kejadian dalam rentang waktu — menyaringnya
+    dengan tanggal akan menghasilkan angka yang tidak berarti apa-apa.
+
+    **Kolom proses tidak ikut filter tanggal saat mode "sedang berjalan"**
+    (arahan Navi, 11 Sep 2026). Yang ditanya kolom itu adalah "sekarang orangnya
+    ada di mana", dan itu tidak punya periode; jendela waktunya sudah dipatok di
+    dalam rumusnya sendiri — dua bulan terakhir, khusus kolom Failed. Karena itu
+    ia memakai `_dfc_all`, daftar kandidat yang belum disaring tanggal.
     """
     div = M.division_summary(_ref, _hc, _dfc, site=site, adp=_adp)
-    c = _dfc if not site else _dfc[_dfc["site"] == site]
+
+    stat = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in (status or ())]
+    berjalan = set(stat or M.STATUS_BERJALAN) == set(M.STATUS_BERJALAN)
+    sumber = _dfc_all if berjalan else _dfc
+    c = sumber if not site else sumber[sumber["site"] == site]
 
     satu = c.drop_duplicates("cand_key")
-    stat = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in (status or ())]
     pb_div = M.process_breakdown(_sf, _df, satu.set_index("cand_key")["divisi"],
                                  statuses=stat, mulai=mulai, akhir=akhir)
     pb_div = pb_div.set_index("_grup") if len(pb_div) else None
@@ -1373,6 +1383,7 @@ def page_division():
     # akan selalu nol saat filternya "In process".
     dsaring = M.filter_date_range(df, sf, mulai, akhir)
     dfc = _cand_divisi(dsaring)
+    dfc_all = _cand_divisi(df)
     est = _estimasi_semua(sf, df)
     periode = (f"{pd.Timestamp(mulai):%d %b %Y} – {pd.Timestamp(akhir):%d %b %Y}"
                if mulai and akhir else "all periods")
@@ -1380,7 +1391,7 @@ def page_division():
         periode += " · " + ", ".join(status_p)
 
     div, level, pb_div, pb_lvl = _rekap_divisi(
-        ref, hc, adp, dfc, sf, dsaring, site, mulai, akhir, tuple(status_p))
+        ref, hc, adp, dfc, dfc_all, sf, df, site, mulai, akhir, tuple(status_p))
     if div.empty:
         st.markdown(theme.empty_state("No data yet", "—"), unsafe_allow_html=True)
         return
@@ -1468,16 +1479,18 @@ def page_division():
         "four process groups read the <b>Result</b> column of each stage, exactly "
         "like the team\u2019s sheet: <b>On progress</b> and <b>Passed</b> count "
         "only candidates whose process is still live (the <b>Process status</b> "
-        "filter, <i>In process</i> by default). With only <i>In process</i> "
-        "selected the <b>Failed</b> column follows the sheet formula letter for "
-        "letter, guards included: it stays at zero while everyone who passed the "
-        "previous stage is already recorded here, and only lights up where the "
-        "chain is broken. Pick any other status and all three columns switch to "
-        "the real result vocabulary — DECLINE and WITHDRAWN at Offering, UNFIT "
-        "at MCU. MCU reads the FU MCU result, which is where FIT TO WORK is "
-        "recorded. <b>FTAP</b> positions are counted into the division their "
-        "name points at, and appear as their own level rows. A candidate "
-        "counts in the period "
+        "filter, <i>In process</i> by default). In that mode the process groups "
+        "<b>ignore the period filter</b> — \"where is everyone right now\" has no "
+        "period — and <b>Failed</b> is bounded by the chain: whatever a stage "
+        "holds (on progress + passed + failed) can never exceed how many passed "
+        "the stage before it, so Failed fills exactly the people who passed but "
+        "have not been recorded here yet, counted over the last two months. If "
+        "the stage already holds everyone, Failed is zero. Interview User has no "
+        "stage before it, so its Failed is the plain two-month count. Pick any "
+        "other status and the chain bound is lifted. MCU reads the FU MCU "
+        "result, which is where FIT TO WORK is recorded. <b>FTAP</b> positions "
+        "are counted into the division their name points at, and appear as their "
+        "own level rows. A candidate counts in the period "
         f"({periode}) when their own activity window overlaps it, so someone who "
         "entered in June and is still at MCU today is still counted; MPP, Actual "
         "and ADP are today's snapshot, not the period's.", block=True), unsafe_allow_html=True)
@@ -1487,16 +1500,18 @@ def page_division():
     # di dalam rumus kolom Failed; di sini dikeluarkan jadi panel tersendiri,
     # karena kalau angkanya tidak nol yang dibutuhkan bukan angka Failed
     # melainkan tahu persis di mana pencatatannya bolong.
-    rantai = M.process_chain(sf, df, cand_keys=set(dfc["cand_key"]),
-                             statuses=[C.STATUS_OPTIONS.get(x, str(x).upper())
-                                       for x in status_p])
+    stat_kode = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in status_p]
+    berjalan = set(stat_kode or M.STATUS_BERJALAN) == set(M.STATUS_BERJALAN)
+    kunci_rantai = set((dfc_all if berjalan else dfc)["cand_key"])
+    rantai = M.process_chain(sf, df, cand_keys=kunci_rantai, statuses=stat_kode)
     if rantai:
         st.markdown(theme.section_heading(
             3, "Pipeline consistency",
             "everyone who passed a stage must already be recorded at the next one"),
             unsafe_allow_html=True)
-        with theme.card("sd_rantai", "Stage-to-stage check",
-                        f"{periode} · follows the filters above"):
+        jendela = ("all periods · in process" if berjalan
+                   else f"{periode} · follows the filters above")
+        with theme.card("sd_rantai", "Stage-to-stage check", jendela):
             baris_r = []
             for x in rantai:
                 sel = int(x["selisih"])
@@ -1510,7 +1525,7 @@ def page_division():
                     f'{theme.esc(x["dari"])} <b>passed</b>', n(x["lulus"]),
                     f'{theme.esc(x["ke"])} <b>on progress + passed</b>',
                     n(x["tercatat"]), nilai])
-            tabel("sd_rantai", "Pipeline consistency", periode,
+            tabel("sd_rantai", "Pipeline consistency", jendela,
                   ["Passed at", "People", "Should appear at", "Recorded", "Gap"],
                   baris_r, align="lrlrr", max_rows=None)
             st.markdown(theme.inline_note(
@@ -1520,8 +1535,10 @@ def page_division():
                 "next one yet — they are not failures, their row simply has not "
                 "been filled in. A <b>negative</b> gap means the later stage has "
                 "more people than the earlier one passed, which usually means a "
-                "result was entered out of order. The same rule sits inside the "
-                "Failed formula of the team\u2019s own sheet.",
+                "result was entered out of order. This check covers every "
+                "candidate, including those whose department is not mapped — so "
+                "it can show a gap even when every division row already "
+                "balances.",
                 block=True), unsafe_allow_html=True)
 
     # ── Tingkat ketiga: posisi dan orangnya. Tidak dijadikan baris tabel karena

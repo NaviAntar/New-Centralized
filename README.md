@@ -707,30 +707,51 @@ berapa dari Actual itu peserta program.
 
 ### Kolom proses: dua mode
 
-**Mode "In process"** (bawaan) mengikuti rumus sheet **huruf per huruf**,
-termasuk dua penjaganya:
+**Mode "In process"** (bawaan) — kolom proses **tidak ikut filter tanggal
+halaman**. "Sekarang orangnya ada di mana" tidak punya periode; jendela waktu
+sudah dipatok di dalam rumusnya sendiri.
 
-```
-Failed = if( rantai tahap ini cocok di tingkat total ; 0 ;
-             if( On Progress + Passed baris ini = 0 ; 0 ;
-                 COUNTIFS(Result = "Failed" ; departemen ; site ;
-                          tanggal mulai tahap dalam periode) ) )
-```
+Aturannya (arahan Navi, 11 Sep 2026) menirukan rantai yang benar-benar terjadi:
 
-Yang sedang diproses memang tidak punya kegagalan: selama semua yang lulus tahap
-sebelumnya sudah tercatat di tahap ini, kolomnya nol. Angka baru muncul kalau
-rantainya bolong — di situlah Failed berfungsi sebagai penanda, bukan sebagai
-hitungan kegagalan. Karena rumusnya mencari kata "Failed" apa adanya, kolom
-Offering dan MCU memang selalu nol di mode ini (kolom Result-nya menulis DECLINE
-dan UNFIT, bukan Failed) — sama persis dengan sheet.
+1. **On Progress** dan **Passed** dihitung dari kandidat berstatus OPEN.
+2. Yang lulus di sebuah tahap pasti lanjut ke tahap berikutnya, jadi seluruh
+   isi tahap berikutnya — on progress + passed + failed — **tidak boleh
+   melebihi jumlah yang lulus di tahap sebelumnya**.
+3. Kolom **Failed** mengisi tepat sisa yang belum tercatat:
 
-Angka 11 Sep 2026, 1–11 Sep: Interview User 17 / 88 / 24 · Psychotest 33 / 51 /
-1 · Offering 19 / 33 / 0 · MCU 26 / 6 / 0.
+   ```
+   Failed = min( gagal dalam DUA BULAN TERAKHIR ,
+                 lulus tahap sebelumnya − (on progress + passed) )
+   ```
+
+   Kalau tahap ini sudah menampung semua yang lulus sebelumnya, sisanya nol dan
+   Failed ikut nol. Kalau masih ada yang hilang, Failed boleh terisi sampai
+   sebanyak yang hilang itu — tidak lebih.
+4. **Interview User** tahap pertama di rantai, jadi tidak punya batas atas:
+   Failed-nya jendela dua bulan apa adanya, status diabaikan.
+
+Jendela dua bulan = tanggal 1 bulan lalu sampai akhir bulan ini
+(`metrics.process_failed_window()`).
+
+Hasil 11 Sep 2026 — **tiap baris divisi**, Psychotest on-prog + passed sama
+persis dengan Interview User passed:
+
+| Divisi | IU passed | Psy on-prog + passed | Psy failed |
+|---|---:|---:|---:|
+| Operation | 21 | 12 + 9 = 21 | 0 |
+| Engineering | 16 | 3 + 13 = 16 | 0 |
+| Plant & Maintenance | 16 | 6 + 10 = 16 | 0 |
+| Human Capital Management | 7 | 1 + 6 = 7 | 0 |
+| Health, Safety & Environment | 6 | 5 + 1 = 6 | 0 |
+| Supply Chain Management | 5 | 0 + 5 = 5 | 0 |
+
+Total: Interview User 17 / 88 / 84 · Psychotest 33 / 51 / 0 · Offering
+19 / 33 / 0 · MCU 26 / 6 / 1.
 
 **Mode status lain** — begitu Closed / Failed / On hold / Backup ikut dipilih,
-penjaga rantai tidak berlaku lagi (yang ditanya bukan lagi "sekarang di mana
-orangnya") dan ketiga kolom memakai kosakata hasil yang sebenarnya: DECLINE dan
-WITHDRAWN di Offering, UNFIT di MCU — nilai yang di sheet luput terhitung.
+batas rantai tidak berlaku lagi (yang ditanya bukan lagi "sekarang di mana
+orangnya"), filter tanggal halaman kembali berlaku, dan ketiga kolom memakai
+kosakata hasil apa adanya: DECLINE dan WITHDRAWN di Offering, UNFIT di MCU.
 
 ### Rekonsiliasi terhadap sheet (10 Sep 2026)
 

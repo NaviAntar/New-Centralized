@@ -2064,6 +2064,22 @@ def _hasil_tahap(sf: pd.DataFrame, tahap: str) -> pd.DataFrame:
     return out[out["_o"].notna()]
 
 
+# Jendela kolom Failed di mode "sedang berjalan": DUA BULAN TERAKHIR, dihitung
+# dari hari ini — tanggal 1 bulan lalu sampai akhir bulan ini. Sengaja TIDAK
+# mengikuti filter tanggal halaman: rumus sheet memakai jendela tetap, dan
+# menyamakannya dengan filter halaman membuat angkanya berubah-ubah tanpa alasan
+# (arahan Navi, 11 Sep 2026).
+PROCESS_FAILED_MONTHS = 2
+
+
+def process_failed_window(bulan: int = PROCESS_FAILED_MONTHS):
+    """(mulai, akhir) jendela Failed — n bulan terakhir sampai akhir bulan ini."""
+    hari_ini = pd.Timestamp.today().normalize()
+    mulai = (hari_ini.replace(day=1) - pd.offsets.MonthBegin(bulan - 1))
+    akhir = hari_ini.replace(day=1) + pd.offsets.MonthEnd(0)
+    return mulai, akhir
+
+
 def _dalam_periode(d: pd.DataFrame, mulai, akhir) -> pd.Series:
     """Baris yang tanggal MULAI tahapnya jatuh dalam periode. Kosong = semua."""
     if mulai is None and akhir is None:
@@ -2085,27 +2101,31 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
     `statuses`: status proses yang dihitung. Kosong/None berarti STATUS_BERJALAN
     ("OPEN"), sama dengan yang dipatok sheet.
 
-    **Dua mode, dan itu memang disengaja** (arahan Navi, 11 Sep 2026):
+    **Mode "sedang berjalan"** — hanya OPEN yang dipilih. Aturannya (arahan Navi,
+    11 Sep 2026) menirukan rantai yang benar-benar terjadi di lapangan:
 
-    *Mode "sedang berjalan"* — hanya OPEN yang dipilih. Kolom Failed mengikuti
-    rumus sheet HURUF PER HURUF, termasuk dua penjaganya:
+      1. On Progress dan Passed dihitung dari kandidat berstatus OPEN.
+      2. Yang lulus di sebuah tahap PASTI lanjut ke tahap berikutnya, jadi
+         seluruh isi tahap berikutnya — on progress + passed + failed — tidak
+         boleh melebihi jumlah yang lulus di tahap sebelumnya.
+      3. Kolom Failed mengisi tepat SISA yang belum tercatat itu:
 
-        Failed = if( rantai tahap ini cocok di tingkat total ; 0 ;
-                     if( On Progress + Passed baris ini = 0 ; 0 ;
-                         COUNTIFS(Result = "Failed" ; departemen ; site ;
-                                  tanggal mulai tahap dalam periode) ) )
+             Failed = min( gagal dalam dua bulan terakhir ,
+                           lulus tahap sebelumnya − (on progress + passed) )
 
-    Yang sedang diproses memang tidak punya kegagalan: kalau semua yang lulus
-    tahap sebelumnya sudah tercatat di tahap ini, tidak ada yang hilang, dan
-    kolomnya nol. Angka baru muncul kalau rantainya bolong — di situlah Failed
-    berfungsi sebagai penanda, bukan sebagai hitungan kegagalan.
+         Kalau tahap ini sudah menampung semua yang lulus sebelumnya, sisanya
+         nol dan Failed ikut nol — persis maksud "kalau sum-nya sama, dia tidak
+         boleh lebih dari nol". Kalau masih ada yang belum tercatat, Failed
+         boleh terisi sampai sebanyak yang hilang itu, tidak lebih.
+      4. Interview User tahap pertama di rantai ini, jadi tidak punya batas
+         atas; Failed-nya jendela dua bulan apa adanya, status diabaikan.
 
-    *Mode status lain* — begitu Closed / Failed / On hold / Backup ikut dipilih,
-    penjaga rantai tidak berlaku lagi (yang ditanya bukan lagi "sekarang di mana
-    orangnya") dan ketiga kolom memakai kosakata hasil yang sebenarnya:
-    DECLINE dan WITHDRAWN di Offering, UNFIT di MCU — nilai yang di sheet luput
-    terhitung karena rumusnya mencari kata "Failed" yang memang tidak pernah
-    ditulis di kolom itu.
+    Jendela Failed selalu dua bulan terakhir, TIDAK mengikuti filter tanggal
+    halaman — `mulai`/`akhir` hanya dipakai di mode status lain.
+
+    **Mode status lain** — begitu Closed / Failed / On hold / Backup ikut
+    dipilih, batas rantai tidak berlaku lagi (yang ditanya bukan lagi "sekarang
+    di mana orangnya") dan ketiga kolom memakai kosakata hasil apa adanya.
     """
     kolom = [f"{sl}_{k}" for sl in PROCESS_SLUG.values() for k in PROCESS_KINDS]
     kosong = pd.DataFrame(columns=["_grup"] + kolom)
@@ -2114,28 +2134,26 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
 
     mau = {str(s).strip().upper() for s in (statuses or STATUS_BERJALAN)}
     mode_berjalan = mau == set(STATUS_BERJALAN)
+    if mode_berjalan:
+        mulai, akhir = process_failed_window()
+
     stat = df.drop_duplicates("cand_key").set_index("cand_key")["status1"]
     stat = stat.astype(str).str.strip().str.upper()
 
-    hit = {}      # tahap -> DataFrame(cand_key, _o)
-    total = {}    # tahap -> {"progress": n, "passed": n}
+    baris = []
     for tahap in PROCESS_STAGES:
         sumber = PROCESS_RESULT_STAGE.get(tahap, tahap)
         d = sf[sf["stage"] == sumber]
         if d.empty or "result" not in d.columns:
-            hit[tahap] = pd.DataFrame(columns=["cand_key", "_o", "_grup"])
-            total[tahap] = {"progress": 0, "passed": 0}
             continue
         r = d["result"].astype(str).str.strip().str.upper()
         o = pd.Series(pd.NA, index=d.index, dtype=object)
         o = o.mask(r.isin(PROCESS_PROGRESS), "progress")
         o = o.mask(r.isin(PROCESS_PASSED[tahap]), "passed")
+        gagal = r.isin(PROCESS_FAILED[tahap])
         if mode_berjalan:
-            # Sheet mencari kata "Failed" apa adanya, dan hanya di dalam periode.
-            o = o.mask(r.isin({"FAILED", "FAIL"}) & _dalam_periode(d, mulai, akhir),
-                       "failed")
-        else:
-            o = o.mask(r.isin(PROCESS_FAILED[tahap]), "failed")
+            gagal &= _dalam_periode(d, mulai, akhir)
+        o = o.mask(gagal, "failed")
 
         h = pd.DataFrame({"cand_key": d["cand_key"], "_o": o})
         h = h[h["_o"].notna()]
@@ -2146,27 +2164,10 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
         # lolos: kandidat yang gagal statusnya FAILED, jadi menyaringnya ke
         # "masih berjalan" akan selalu menghasilkan nol.
         h = h[h["_st"].isin(mau) | h["_o"].eq("failed")]
-        hit[tahap] = h
-        total[tahap] = {
-            k: int(h.loc[h["_o"] == k, "cand_key"].nunique())
-            for k in ("progress", "passed")
-        }
-
-    # Penjaga rantai: kalau yang lulus di tahap sebelumnya sudah tercatat
-    # seluruhnya di tahap ini, kolom Failed tahap ini nol. Hanya berlaku di mode
-    # "sedang berjalan" — persis seperti rumus sheet.
-    nol_karena_rantai = set()
-    if mode_berjalan:
-        for a, b in PROCESS_CHAIN:
-            if total[a]["passed"] == total[b]["progress"] + total[b]["passed"]:
-                nol_karena_rantai.add(b)
-
-    baris = []
-    for tahap, h in hit.items():
         if len(h):
-            h = h.copy()
             h["_tahap"] = tahap
             baris.append(h[["cand_key", "_o", "_grup", "_tahap"]])
+
     if not baris:
         return kosong
     semua = pd.concat(baris, ignore_index=True)
@@ -2181,13 +2182,15 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame, grup: pd.Series,
             except KeyError:
                 kol = pd.Series(0, index=out.index)
             out[f"{sl}_{k}"] = kol.reindex(out.index).fillna(0).astype(int)
-        if tahap in nol_karena_rantai:
-            out[f"{sl}_failed"] = 0
-        elif mode_berjalan:
-            # Penjaga kedua: baris yang tidak punya seorang pun di tahap ini
-            # tidak boleh tiba-tiba menampilkan kegagalan.
-            sepi = (out[f"{sl}_progress"] + out[f"{sl}_passed"]) == 0
-            out.loc[sepi, f"{sl}_failed"] = 0
+
+    if mode_berjalan:
+        # Batas rantai, per baris: isi sebuah tahap tidak boleh melebihi jumlah
+        # yang lulus di tahap sebelumnya. Failed mengisi tepat sisanya.
+        for a, b in PROCESS_CHAIN:
+            sa, sb = PROCESS_SLUG[a], PROCESS_SLUG[b]
+            ruang = (out[f"{sa}_passed"]
+                     - out[f"{sb}_progress"] - out[f"{sb}_passed"]).clip(lower=0)
+            out[f"{sb}_failed"] = out[f"{sb}_failed"].clip(upper=ruang)
     return out.reset_index().rename(columns={"index": "_grup"})
 
 
