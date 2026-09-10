@@ -1876,10 +1876,13 @@ def prepare_headcount(emp: pd.DataFrame, kode_divisi: dict | None = None) -> pd.
 
     Dua aturan dari sheet "Copy of Summary by Division":
       - Staff = Level < 11, Non Staff = Level 11 (Level kosong dibuang).
-      - Karyawan **FTAP** dipindah keluar dari Human Capital Management jadi
-        divisi sendiri. Position Name mereka selalu diawali "FTAP"; selama
-        mereka ikut terhitung di HCM, HCM terlihat jauh lebih besar dari
-        kenyataannya.
+      - Karyawan **FTAP** ditandai lewat kolom `ftap` tapi TETAP dihitung di
+        divisinya (Human Capital Management). Position Name mereka selalu
+        diawali "FTAP". Mereka tampil sebagai KOLOM tersendiri, bukan divisi
+        tersendiri — persis seperti sheet "Copy of Summary by Division", supaya
+        Actual portal dan Actual sheet tidak mungkin berbeda (arahan Navi,
+        10 Sep 2026; sebelumnya mereka dipindah jadi divisi sendiri dan itulah
+        satu-satunya penyebab angka portal meleset dari rumus Excel).
     """
     d = emp.copy()
     d.columns = [str(c).strip() for c in d.columns]
@@ -1910,7 +1913,7 @@ def prepare_headcount(emp: pd.DataFrame, kode_divisi: dict | None = None) -> pd.
 
     out = pd.DataFrame({
         "site": site,
-        "divisi": divisi.where(~ftap, C.FTAP_DIVISION),
+        "divisi": divisi,
         "level_code": lvl,
         "status": lvl.map(lambda v: "Non Staff" if pd.notna(v) and v >= 11
                           else "Staff" if pd.notna(v) else None),
@@ -2045,20 +2048,43 @@ def process_breakdown(sf: pd.DataFrame, df: pd.DataFrame,
     return out.reset_index().rename(columns={"index": "_grup"})
 
 
-def _mpp_dengan_ftap(mpp: pd.Series, aktual: pd.Series) -> pd.Series:
-    """MPP divisi FTAP disamakan dengan Actual-nya.
+def _need_to_hire(out: pd.DataFrame) -> pd.Series:
+    """Berapa orang yang masih harus direkrut dari luar.
 
-    Future Talent Acceleration Program tidak punya rencana headcount tersendiri
-    di MPP2 — orangnya direkrut sebagai program, bukan untuk mengisi posisi yang
-    sudah dianggarkan. Kalau MPP-nya dibiarkan nol, Gap FTAP tampil sebagai
-    kelebihan orang yang besar dan menutupi kekurangan divisi lain. Disamakan
-    dengan Actual, Gap-nya nol dan divisi ini terbaca apa adanya: sekian orang,
-    memang segitu rencananya (arahan Navi, 8 Sep 2026).
+    Sheet menulisnya `ADP + Gap − FTAP` (Gap = Actual − MPP, negatif berarti
+    kurang orang). Di portal tandanya dibalik supaya kolom bernama "Need to
+    hire" berisi angka yang benar-benar berarti "rekrut sekian orang lagi":
+
+        MPP − Actual − ADP + FTAP,  minimal nol
+
+    ADP mengurangi karena orangnya sudah menempati posisi itu sebagai acting.
+    FTAP MENAMBAH karena mereka ikut terhitung di Actual padahal tidak mengisi
+    posisi yang dianggarkan — tanpa dikembalikan, kebutuhan rekrut divisi itu
+    terlihat lebih kecil dari kenyataannya.
     """
-    out = mpp.copy()
-    if C.FTAP_DIVISION in aktual.index:
-        out.loc[C.FTAP_DIVISION] = aktual.get(C.FTAP_DIVISION, 0)
-    return out
+    ftap = out["ftap"] if "ftap" in out.columns else 0
+    adp = out["adp"] if "adp" in out.columns else 0
+    return (out["mpp"] - out["actual"] - adp + ftap).clip(lower=0)
+
+
+def _hitung_ftap(hc: pd.DataFrame, kunci: str) -> pd.Series:
+    """Jumlah karyawan FTAP per grup — isi kolom FTAP.
+
+    Future Talent Acceleration Program tercatat di Human Capital Management di
+    daftar karyawan, jadi mereka IKUT di Actual HCM. Kolom ini menyebut berapa
+    dari Actual itu yang sebenarnya anak FTAP, sehingga "HCM kelihatan besar"
+    bisa dijelaskan tanpa mengubah angka Actual-nya.
+
+    Sheet aslinya mengetik angka ini manual (BCP 15, KCP 9, ACP 4). Di sini
+    diturunkan dari data — Position Name yang diawali "FTAP" — jadi angkanya
+    ikut bertambah sendiri saat program menerima orang baru.
+    """
+    if hc is None or hc.empty or "ftap" not in hc.columns:
+        return pd.Series(dtype=int)
+    f = hc[hc["ftap"].fillna(False)]
+    if f.empty:
+        return pd.Series(dtype=int)
+    return f.groupby(kunci).size()
 
 
 # Sebutan level di sheet ADP tidak sama persis dengan nama level portal.
@@ -2117,7 +2143,6 @@ def division_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
 
     mpp = r.groupby("divisi")["mpp"].sum()
     aktual = h.groupby("divisi").size()
-    mpp = _mpp_dengan_ftap(mpp, aktual)
     pipe = _pipeline_per_grup(cand, ["divisi"]).set_index("divisi") if len(cand) else None
 
     out = pd.DataFrame({"mpp": mpp}).join(aktual.rename("actual"), how="outer")
@@ -2125,7 +2150,9 @@ def division_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
     out["gap"] = out["actual"] - out["mpp"]
     out["adp"] = (_hitung_adp(adp, "divisi", site)
                   .reindex(out.index).fillna(0).astype(int))
-    out["need"] = (out["mpp"] - out["actual"] - out["adp"]).clip(lower=0)
+    out["ftap"] = (_hitung_ftap(h, "divisi")
+                   .reindex(out.index).fillna(0).astype(int))
+    out["need"] = _need_to_hire(out)
     for k in ("kandidat", "ongoing", "hired", "pool", "gagal"):
         out[k] = (pipe[k] if pipe is not None and k in pipe else 0)
         out[k] = out[k].reindex(out.index).fillna(0).astype(int)
@@ -2155,10 +2182,6 @@ def level_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
     h = h.copy()
     h["_k"] = h["level_code"].map(C.level_name)
     aktual = h.groupby("_k").size()
-    # Divisi FTAP: MPP tiap levelnya mengikuti Actual, sama seperti di tingkat
-    # divisi — kalau tidak, satu-satunya level FTAP akan tampil kelebihan orang.
-    if divisi == C.FTAP_DIVISION:
-        mpp = aktual.astype(float).copy()
 
     pipe = None
     if len(c):
@@ -2184,7 +2207,8 @@ def level_summary(ref: pd.DataFrame, hc: pd.DataFrame, cand: pd.DataFrame,
             for nama in out.index:
                 out.loc[nama, "adp"] = int(hit.get(nama, 0))
     out["adp"] = out["adp"].fillna(0).astype(int)
-    out["need"] = (out["mpp"] - out["actual"] - out["adp"]).clip(lower=0)
+    out["ftap"] = (_hitung_ftap(h, "_k").reindex(out.index).fillna(0).astype(int))
+    out["need"] = _need_to_hire(out)
 
     for k in ("kandidat", "ongoing", "hired", "pool", "gagal"):
         out[k] = (pipe[k] if pipe is not None and k in pipe else 0)

@@ -1202,6 +1202,7 @@ KOLOM_DIVISI = [
     {"label": "Actual", "align": "r"},
     {"label": "Gap", "align": "r"},
     {"label": "ADP", "align": "r"},
+    {"label": "FTAP", "align": "r"},
     {"label": "Need to hire", "align": "r"},
     {"label": "Candidates", "align": "r", "sep": True},
     {"label": "In process", "align": "r"},
@@ -1219,8 +1220,9 @@ KOLOM_DIVISI = [
 ]
 # Judul datar untuk unduhan Excel/PNG: header dua tingkat tidak punya padanan
 # di file, jadi nama grupnya ditempelkan ke tiap anaknya.
-HEAD_DIVISI = ["Division / Level", "MPP", "Actual", "Gap", "ADP", "Need to hire",
-               "Candidates", "In process", "Onboarded", "Backup", "Failed"] + [
+HEAD_DIVISI = ["Division / Level", "MPP", "Actual", "Gap", "ADP", "FTAP",
+               "Need to hire", "Candidates", "In process", "Onboarded", "Backup",
+               "Failed"] + [
     f"{t} — {k}" for t in ("Interview User", "Psychotest", "Offering", "MCU")
     for k in ("On prog", "Passed", "Failed")]
 ALIGN_DIVISI = "l" + "r" * (len(HEAD_DIVISI) - 1)
@@ -1257,7 +1259,7 @@ def _baris_divisi(nama, r, pb, kunci):
     """Satu baris tabel — dipakai baris divisi maupun baris level di bawahnya."""
     perlu = int(r.get("need", max(int(r["mpp"]) - int(r["actual"]), 0)))
     sel = [nama, n(r["mpp"]), n(r["actual"]), _gap_sel(r["gap"]),
-           _nol_abu(r.get("adp", 0)), _nol_abu(perlu),
+           _nol_abu(r.get("adp", 0)), _nol_abu(r.get("ftap", 0)), _nol_abu(perlu),
            n(r["kandidat"]), n(r["ongoing"]), n(r["hired"]), n(r["pool"]),
            n(r["gagal"])]
     for tahap, slug in M.PROCESS_SLUG.items():
@@ -1375,8 +1377,8 @@ def page_division():
                   f"candidates active {periode}"), unsafe_allow_html=True)
 
     total = {k: int(div[k].sum()) for k in
-             ("mpp", "actual", "gap", "adp", "need", "kandidat", "ongoing",
-              "hired", "pool", "gagal")}
+             ("mpp", "actual", "gap", "adp", "ftap", "need", "kandidat",
+              "ongoing", "hired", "pool", "gagal")}
     k = st.columns(5, gap="small")
     kartu = [
         ("MPP", total["mpp"], "planned headcount", "📋", theme.BRAND["navy"]),
@@ -1384,8 +1386,8 @@ def page_division():
         ("Gap", f'{total["gap"]:+d}', "actual − MPP", "⚖️",
          theme.STATUS["bad"] if total["gap"] < 0 else theme.STATUS["good"]),
         ("Need to hire", total["need"],
-         f'shortfalls only, {n(total["adp"])} ADP deducted', "🎯",
-         theme.STATUS["warn"]),
+         f'shortfalls only · −{n(total["adp"])} ADP · +{n(total["ftap"])} FTAP',
+         "🎯", theme.STATUS["warn"]),
         ("In process", total["ongoing"], f"active {periode}", "⏳",
          theme.STATUS["warn"]),
     ]
@@ -1424,7 +1426,8 @@ def page_division():
         return int(pb_div[f"{slug}_{jenis}"].sum())
 
     total_sel = ["TOTAL", n(total["mpp"]), n(total["actual"]),
-                 f'{total["gap"]:+d}', n(total["adp"]), n(total["need"]),
+                 f'{total["gap"]:+d}', n(total["adp"]), n(total["ftap"]),
+                 n(total["need"]),
                  n(total["kandidat"]), n(total["ongoing"]), n(total["hired"]),
                  n(total["pool"]), n(total["gagal"])] + [
         n(jum(sl, jn)) for sl in M.PROCESS_SLUG.values() for jn in M.PROCESS_KINDS]
@@ -1442,11 +1445,13 @@ def page_division():
         "<b>MPP</b> comes from the <i>MPP2</i> tab and <b>Actual</b> from "
         "<i>Existing Employee</i> — the same tabs the team's own "
         "<i>Summary by Division</i> sheet uses. <b>ADP</b> counts people already "
-        "acting in the role, so <b>Need to hire</b> = MPP − Actual − ADP (never "
-        "below zero). <b>FTAP</b> is shown as its own division: those employees "
-        "sit under Human Capital Management in the employee list, which made HCM "
-        "look far larger than it is; their MPP is set equal to Actual because the "
-        "program has no headcount plan of its own. The <b>Process status</b> filter "
+        "acting in the role, and <b>FTAP</b> counts Future Talent Acceleration "
+        "Program employees — they sit under Human Capital Management in the "
+        "employee list, so they are inside that Actual without filling a budgeted "
+        "position. Hence <b>Need to hire</b> = MPP − Actual − ADP + FTAP, never "
+        "below zero — the same arithmetic as the team\u2019s own sheet, with the "
+        "sign flipped so the number reads as \"hire this many more\". The "
+        "<b>Process status</b> filter "
         "narrows the candidate columns the same way the period does. A candidate "
         "counts in the period "
         f"({periode}) when their own activity window overlaps it, so someone who "

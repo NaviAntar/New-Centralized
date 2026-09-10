@@ -148,11 +148,18 @@ REPORT_GID_EMPLOYEE = ""
 REPORT_GID_ADP = ""
 
 # Karyawan Future Talent Acceleration Program. Di daftar karyawan mereka tercatat
-# di divisi Human Capital Management sehingga HCM terlihat jauh lebih besar dari
-# kenyataannya; Position Name mereka selalu diawali "FTAP". Dipisah jadi divisi
-# sendiri, dan MPP-nya disamakan dengan Actual — program ini tidak punya rencana
-# headcount tersendiri, jadi Gap-nya selalu nol (arahan Navi, 8 Sep 2026).
-FTAP_DIVISION = "FTAP"
+# di divisi Human Capital Management, dan Position Name mereka selalu diawali
+# "FTAP".
+#
+# Mereka TETAP dihitung di HCM dan tampil sebagai KOLOM tersendiri — sama persis
+# dengan sheet "Copy of Summary by Division". Sempat (8 Sep 2026) dipisah jadi
+# divisi sendiri supaya HCM tidak terlihat kelebihan orang, tapi itulah
+# satu-satunya penyebab Actual dan MPP portal meleset dari rumus Excel milik tim.
+# Dikembalikan 10 Sep 2026: satu sumber, satu cara hitung, satu hasil.
+#
+# Bedanya dengan sheet: di sana angka FTAP diketik manual (BCP 15, KCP 9, ACP 4),
+# di sini diturunkan dari Position Name sehingga ikut bertambah sendiri saat
+# program menerima orang baru (BCP 41, KCP 33, ACP 15 per 10 Sep 2026).
 FTAP_POSITION_PREFIX = "FTAP"
 REPORT_GID_MPP = REPORT_GIDS["Update MPP"]
 

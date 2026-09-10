@@ -691,19 +691,60 @@ tebakan dari kode posisi, dan isinya sudah tersaring (tidak ada End Date).
 ditempatkan di level yang sedang dia duduki (kolom `Level Acting`), bukan level
 asalnya — yang berkurang kebutuhannya adalah posisi yang sedang dia isi.
 
-**Need to hire** = MPP − Actual − ADP, minimal nol. Sheet aslinya menulis angka
-ini bertanda terbalik (`ADP + Gap`, negatif berarti kurang); di portal tandanya
-dibalik supaya kolom bernama "Need to hire" berisi angka yang benar-benar
-berarti "rekrut sekian orang lagi".
+**Need to hire** = `MPP − Actual − ADP + FTAP`, minimal nol. Sheet aslinya
+menulis angka ini bertanda terbalik (`ADP + Gap − FTAP`, negatif berarti
+kurang); di portal tandanya dibalik supaya kolom bernama "Need to hire" berisi
+angka yang benar-benar berarti "rekrut sekian orang lagi".
 
-**FTAP jadi divisi sendiri.** Karyawan Future Talent Acceleration Program
-tercatat di divisi Human Capital Management di daftar karyawan — 89 orang, yang
-membuat HCM terlihat jauh lebih besar dari kenyataannya. Position Name mereka
-selalu diawali `FTAP`, jadi mereka dipindah ke divisi `FTAP` tersendiri, dan
-**MPP FTAP disamakan dengan Actual**: program ini tidak punya rencana headcount
-sendiri di MPP2, dan kalau MPP-nya dibiarkan nol, Gap FTAP tampil sebagai
-kelebihan orang yang besar dan menutupi kekurangan divisi lain. Hasilnya HCM
-turun dari 232 jadi 143 orang.
+ADP mengurangi karena orangnya sudah menempati posisi itu sebagai acting. FTAP
+**menambah** karena mereka ikut terhitung di Actual padahal tidak mengisi posisi
+yang dianggarkan — tanpa dikembalikan, kebutuhan rekrut HCM terlihat jauh lebih
+kecil dari kenyataannya.
+
+Contoh HCM BCP: MPP 39, Actual 66, ADP 1, FTAP 41 → 39 − 66 − 1 + 41 = **13**.
+Terbaca: 66 orang di HCM, 41 di antaranya anak FTAP, jadi yang benar-benar
+mengisi posisi hanya 25 dari 39 yang dianggarkan.
+
+**FTAP adalah KOLOM, bukan divisi.** Karyawan Future Talent Acceleration
+Program tercatat di divisi Human Capital Management di daftar karyawan, dan
+Position Name mereka selalu diawali `FTAP`. Mereka **tetap dihitung di HCM** dan
+tampil sebagai kolom tersendiri — sama persis dengan sheet.
+
+Sempat (8 Sep 2026) dipisah jadi divisi sendiri supaya HCM tidak terlihat
+kelebihan orang. Itu ternyata **satu-satunya penyebab angka portal meleset dari
+rumus Excel**: MPP BCP jadi 3.080 padahal sheet 3.039, dan Actual HCM jadi 25
+padahal sheet 66. Dikembalikan 10 Sep 2026 — satu sumber, satu cara hitung,
+satu hasil.
+
+Bedanya dengan sheet: di sana angka FTAP diketik manual (BCP 15, KCP 9, ACP 4),
+di portal diturunkan dari Position Name sehingga ikut bertambah sendiri saat
+program menerima orang baru (BCP 41, KCP 33, ACP 15 per 10 Sep 2026).
+
+### Rekonsiliasi terhadap sheet (10 Sep 2026)
+
+Diuji terhadap `Report Recruitment 4.xlsx` — portal dijalankan atas tab yang
+sama persis dengan yang dibaca rumus sheet, jadi selisih yang muncul murni
+selisih logika, bukan selisih tanggal snapshot.
+
+| Site | MPP sheet/portal | Actual sheet/portal | ADP sheet/portal |
+|---|---|---|---|
+| BCP | 3.039 / 3.039 | 2.555 / 2.555 | 38 / 38 |
+| KCP | 1.312 / 1.312 | 1.344 / 1.344 | 9 / 9 |
+| ACP | 637 / 637 | 608 / 608 | 8 / 8 |
+| SSCP | 1.009 / 1.009 | 338 / 338 | 0 / 0 |
+| JKT | 257 / 257 | 213 / **216** | 6 / 6 |
+| BPN | 24 / 24 | 21 / 21 | 0 / 0 |
+
+Satu-satunya selisih yang tersisa: **Hospitality JKT, 3 orang**. Mereka ada di
+tab Existing Employee tapi blok JKT di sheet tidak punya baris Hospitality, jadi
+sheet tidak menghitungnya. Portal sengaja tidak ikut menghilangkan orang —
+kalau baris departemennya ditambahkan di sheet, angkanya akan sama.
+
+Empat baris MPP di blok JKT (Internal Audit, HSE, Finance Controller & Treasury,
+Plant & Maintenance) juga selisih 1–2 karena nilai di sel-nya sudah basi: di
+MPP2 ada posisi Manager/Superintendent yang tertulis `Non Staff`, jadi
+`SUMIFS(...;"Staff")` sekarang menghasilkan angka yang berbeda dari yang
+tersimpan di sheet. Itu perlu dibereskan di MPP2, bukan di portal.
 
 **Filter status proses.** Multiselect Open / Close / Failed / Hold / Backup
 candidate, kosong berarti semua. Sama seperti filter tanggal, yang disaring
