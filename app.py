@@ -137,8 +137,23 @@ def data_or_stop():
 # ===========================================================================
 # Pembantu bersama
 # ===========================================================================
+def _satu_tanggal(v):
+    """Nilai st.date_input jadi satu tanggal (atau None).
+
+    date_input bisa mengembalikan tuple saat mode rentang, dan tuple kosong
+    sesaat setelah dikosongkan — keduanya dibaca sebagai "tidak diisi".
+    """
+    if isinstance(v, (list, tuple)):
+        v = v[0] if v else None
+    return v or None
+
+
 def _kontrol(s: dict):
     jenis = s.get("kind", "select")
+    if jenis == "spacer":
+        # Kolom kosong. Gunanya menjaga lebar: filter di baris kedua harus
+        # berdiri tepat di bawah filter baris pertama, bukan melebar sendiri.
+        return None
     if jenis == "multi":
         return st.multiselect(s["label"], s["options"], key=s["key"],
                               default=s.get("default", []),
@@ -846,7 +861,8 @@ def page_weekly():
     # Satu baris filter untuk SELURUH halaman. Semua bagian di bawah — Performance,
     # New Hire, Ringkasan per site, On Progress, dan Karyawan resign — membaca
     # pilihan yang sama.
-    tahun_pilih, bulan_pilih, site_pilih = filterbar("wk", [
+    (tahun_pilih, bulan_pilih, site_pilih,
+     mulai_p, akhir_p, _) = filterbar("wk", [[
         {"label": "Year", "key": "wk_year", "kind": "multi",
          "options": [str(y) for y in tahun_ada], "default": thn_default, "width": 1,
          "placeholder": "Year"},
@@ -856,20 +872,47 @@ def page_weekly():
         {"label": "Site", "key": "wk_site", "kind": "multi",
          "options": list(C.SITES), "default": [], "width": 1,
          "placeholder": "All sites"},
-    ])
+    ], [
+        {"label": "From date", "key": "wk_from", "kind": "date", "width": 1,
+         "help": "Narrows the months above down to a day range. Every section on "
+                 "this page follows it, each using its own stage date: onboarding "
+                 "by onboarding date, Offering by start of offering, MCU by the "
+                 "date the offering letter was sent, Resignations by end date."},
+        {"label": "To date", "key": "wk_to", "kind": "date", "width": 1},
+        {"label": "", "key": "wk_pad", "kind": "spacer", "width": 2},
+    ]])
 
     periods = periode_terpilih(tahun_pilih, bulan_pilih)
     if tahun_pilih and not bulan_pilih:
         # Tidak memilih bulan berarti seluruh bulan pada tahun yang dipilih.
         periods = [(int(t), b) for t in tahun_pilih for b in range(1, 13)]
 
+    # Rentang bulan yang terpilih — jadi nilai awal filter tanggal di bawahnya.
     if periods:
-        dari = min(pd.Timestamp(t, b, 1) for t, b in periods)
-        sampai = max(pd.Timestamp(t, b, 1) + pd.offsets.MonthEnd(1) for t, b in periods)
-        label_periode = f"{dari.date()} to {sampai.date()}"
+        awal = min(pd.Timestamp(t, b, 1) for t, b in periods)
+        akhir = max(pd.Timestamp(t, b, 1) + pd.offsets.MonthEnd(1) for t, b in periods)
     else:
-        dari = sampai = None
-        label_periode = "sepanjang waktu"
+        awal = akhir = None
+
+    # Filter tanggal di baris kedua mempersempit bulan di baris pertama sampai
+    # ke harinya. Dibiarkan KOSONG secara bawaan, bukan diisi otomatis dengan
+    # ujung-ujung bulan terpilih: kalau diisi, mengganti bulan tidak akan
+    # mengubah tanggalnya (nilai widget bertahan di session_state) dan halaman
+    # diam-diam menyaring bulan yang sudah tidak dipilih lagi.
+    mulai_p, akhir_p = _satu_tanggal(mulai_p), _satu_tanggal(akhir_p)
+    if mulai_p and akhir_p and mulai_p > akhir_p:
+        mulai_p, akhir_p = akhir_p, mulai_p
+
+    dari = pd.Timestamp(mulai_p) if mulai_p else awal
+    sampai = pd.Timestamp(akhir_p) if akhir_p else akhir
+    if dari is not None and sampai is not None:
+        label_periode = f"{dari:%d %b %Y} – {sampai:%d %b %Y}"
+    elif dari is not None:
+        label_periode = f"from {dari:%d %b %Y}"
+    elif sampai is not None:
+        label_periode = f"until {sampai:%d %b %Y}"
+    else:
+        label_periode = "all periods"
     label_site = ", ".join(site_pilih) if site_pilih else "all sites"
 
     # ── Performance ────────────────────────────────────────────────────────
@@ -914,7 +957,8 @@ def page_weekly():
     st.markdown(theme.section_heading(2, "New Hire", "onboarding per department"),
                 unsafe_allow_html=True)
     with theme.card("wk_nh", "New Hire", f"{label_periode} · {label_site}"):
-        nh = M.new_hire_matrix(df, periods, sites=site_pilih)
+        nh = M.new_hire_matrix(df, periods, sites=site_pilih,
+                               dari=dari, sampai=sampai)
         if nh.empty:
             st.markdown(theme.empty_state(
                 "No onboarding in this period",
@@ -930,7 +974,8 @@ def page_weekly():
     st.markdown(theme.section_heading(3, "Summary per site", "onboarding per site"),
                 unsafe_allow_html=True)
     with theme.card("wk_sum", "Summary", f"{label_periode} · {label_site}"):
-        sm = M.summary_matrix(df, periods, sites=site_pilih)
+        sm = M.summary_matrix(df, periods, sites=site_pilih,
+                              dari=dari, sampai=sampai)
         if sm.empty:
             st.markdown(theme.empty_state(
                 "No onboarding in this period",
@@ -944,9 +989,10 @@ def page_weekly():
 
     # ── On Progress ────────────────────────────────────────────────────────
     st.markdown(theme.section_heading(
-        4, "On Progress", "mengikuti rumus sheet ONP, mengikuti filter di atas"),
+        4, "On Progress", "follows the ONP sheet formula and the filters above"),
         unsafe_allow_html=True)
-    panels = M.on_progress(df, periods=periods, sites=site_pilih)
+    panels = M.on_progress(df, periods=periods, sites=site_pilih,
+                           dari=dari, sampai=sampai)
     cols = st.columns(3, gap="small")
     for col, (nama, sel) in zip(cols, panels.items()):
         with col, theme.card(f"wk_onp_{nama}", nama, f"{len(sel)} candidates"):
@@ -977,7 +1023,8 @@ def page_weekly():
                 "Viewer'.", emoji="🔌"),
                 unsafe_allow_html=True)
         else:
-            res = M.resign(mpp, periods=periods, sites=site_pilih)
+            res = M.resign(mpp, periods=periods, sites=site_pilih,
+                           dari=dari, sampai=sampai)
             if res.empty:
                 st.markdown(theme.empty_state("No resignations in this period", "—"),
                             unsafe_allow_html=True)
@@ -1225,6 +1272,7 @@ KOLOM_DIVISI = [
     {"label": "MCU", "align": "r", "sep": True,
      "sub": ["On prog", "Passed", "Failed"]},
     {"label": "Ready to onboard", "align": "r", "sep": True},
+    {"label": "Est Dev", "align": "r"},
 ]
 # Judul datar untuk unduhan Excel/PNG: header dua tingkat tidak punya padanan
 # di file, jadi nama grupnya ditempelkan ke tiap anaknya.
@@ -1238,7 +1286,7 @@ KOLOM_DIVISI = [
 HEAD_DIVISI = ["Division", "Level", "MPP", "Actual", "Gap", "ADP", "FTAP",
                "Need to hire", "Candidates", "Onboarded", "Failed"] + [
     f"{t} — {k}" for t in ("Interview User", "Psychotest", "Offering", "MCU")
-    for k in ("On prog", "Passed", "Failed")] + ["Ready to onboard"]
+    for k in ("On prog", "Passed", "Failed")] + ["Ready to onboard", "Est Dev"]
 ALIGN_DIVISI = "ll" + "r" * (len(HEAD_DIVISI) - 2)
 
 
@@ -1283,6 +1331,28 @@ def _angka0(v):
         return 0
 
 
+def _estdev_sel(v):
+    """Est Dev = Need to hire - Ready to onboard: sisa yang benar-benar harus dicari.
+
+    Orang yang sudah FIT TO WORK dan tinggal menunggu tanggal onboarding bukan
+    lagi pekerjaan rekrutmen — kursinya sudah ada yang mengisi, harinya saja
+    yang belum tiba. Est Dev memisahkan keduanya: Need to hire adalah kursi yang
+    kosong hari ini, Est Dev adalah kursi yang masih harus dicarikan orangnya.
+
+    Sheet tim menulisnya `Need to Hire + Ready On Board` karena di sana Need to
+    Hire bertanda minus (kekurangan). Di portal angkanya positif, jadi rumus
+    yang sama ditulis sebagai pengurangan — hasilnya identik.
+
+    Nilai minus berarti yang sudah dijadwalkan onboarding LEBIH BANYAK daripada
+    kursi yang kosong, jadi tidak dipotong ke nol: angka itu justru informasi.
+    """
+    v = int(v)
+    if not v:
+        return f'<span style="color:{theme.NEUTRAL["text_soft"]}">0</span>'
+    warna = theme.STATUS["good"] if v < 0 else theme.NEUTRAL["text"]
+    return f'<span style="color:{warna};font-weight:700">{v}</span>'
+
+
 def _baris_divisi(nama, r, pb, kunci):
     """Satu baris tabel — dipakai baris divisi maupun baris level di bawahnya."""
     mpp, aktual = _angka0(r.get("mpp")), _angka0(r.get("actual"))
@@ -1298,6 +1368,7 @@ def _baris_divisi(nama, r, pb, kunci):
     siap = _angka0(r.get("ready"))
     sel.append(f'<span style="color:{theme.STATUS["good"]};font-weight:700">{siap}</span>'
                if siap else _nol_abu(0))
+    sel.append(_estdev_sel(perlu - siap))
     return sel
 
 
@@ -1578,7 +1649,8 @@ def page_division():
                  n(total["need"]),
                  n(total["kandidat"]), n(total["hired"]), n(total["gagal"])] + [
         n(jum(sl, jn)) for sl in M.PROCESS_SLUG.values()
-        for jn in M.PROCESS_KINDS] + [n(total["ready"])]
+        for jn in M.PROCESS_KINDS] + [
+        n(total["ready"]), n(int(total["need"]) - int(total["ready"]))]
 
     unduh_saja("sd_tabel", f"Summary by Division — {judul}",
                f"{len(div)} divisions · {periode}",
