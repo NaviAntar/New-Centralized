@@ -458,6 +458,9 @@ def load_process_monitoring(source: str | pd.DataFrame | None = None) -> pd.Data
         return pd.DataFrame(columns=["candidate", "site", "divisi", "level", "status"])
 
     nama = df.get("Nama", df.get("CANDIDATE NAME"))
+    posisi = df.get("POSITION NAME")
+    progres = df.get("LAST PROGRESS", df.get("LAST PROGRESS 1"))
+    onboard = df.get("DATE OF ONBOARDING")
     out = pd.DataFrame({
         "candidate": (nama.astype("string").str.strip().fillna("")
                       if nama is not None else ""),
@@ -468,6 +471,15 @@ def load_process_monitoring(source: str | pd.DataFrame | None = None) -> pd.Data
                    .map(C.merge_division)),
         "level": df["LEVEL"].map(C.monitoring_level),
         "status": df["STATUS"].astype(str).str.strip().str.upper(),
+        # Staff / Non Staff diturunkan dari sebutan level, bukan kolom sendiri —
+        # tab ini tidak punya kolom Status level seperti MPP2.
+        "jenis": df["LEVEL"].map(C.monitoring_level_type),
+        "position": (posisi.astype("string").str.strip().fillna("")
+                     if posisi is not None else ""),
+        "last_progress": (progres.astype("string").str.strip().fillna("")
+                          if progres is not None else ""),
+        "onboard_date": (pd.to_datetime(onboard, errors="coerce", dayfirst=True)
+                         if onboard is not None else pd.NaT),
     }, index=df.index)
 
     for tahap, (kol_res, kol_tgl) in _PROSES_KOLOM.items():
