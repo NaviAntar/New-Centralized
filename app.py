@@ -1214,9 +1214,7 @@ KOLOM_DIVISI = [
     {"label": "FTAP", "align": "r"},
     {"label": "Need to hire", "align": "r"},
     {"label": "Candidates", "align": "r", "sep": True},
-    {"label": "In process", "align": "r"},
     {"label": "Onboarded", "align": "r"},
-    {"label": "Backup", "align": "r"},
     {"label": "Failed", "align": "r"},
     {"label": "Interview User", "align": "r", "sep": True,
      "sub": ["On prog", "Passed", "Failed"]},
@@ -1226,6 +1224,7 @@ KOLOM_DIVISI = [
      "sub": ["On prog", "Passed", "Failed"]},
     {"label": "MCU", "align": "r", "sep": True,
      "sub": ["On prog", "Passed", "Failed"]},
+    {"label": "Ready to onboard", "align": "r", "sep": True},
 ]
 # Judul datar untuk unduhan Excel/PNG: header dua tingkat tidak punya padanan
 # di file, jadi nama grupnya ditempelkan ke tiap anaknya.
@@ -1237,10 +1236,9 @@ KOLOM_DIVISI = [
 # lipat (temuan Navi, 11 Sep 2026). Dengan dua kolom, "baris divisi" = baris yang
 # kolom Level-nya kosong, dan penjumlahannya tidak mungkin salah.
 HEAD_DIVISI = ["Division", "Level", "MPP", "Actual", "Gap", "ADP", "FTAP",
-               "Need to hire", "Candidates", "In process", "Onboarded", "Backup",
-               "Failed"] + [
+               "Need to hire", "Candidates", "Onboarded", "Failed"] + [
     f"{t} — {k}" for t in ("Interview User", "Psychotest", "Offering", "MCU")
-    for k in ("On prog", "Passed", "Failed")]
+    for k in ("On prog", "Passed", "Failed")] + ["Ready to onboard"]
 ALIGN_DIVISI = "ll" + "r" * (len(HEAD_DIVISI) - 2)
 
 
@@ -1292,12 +1290,14 @@ def _baris_divisi(nama, r, pb, kunci):
     sel = [nama, n(mpp), n(aktual), _gap_sel(_angka0(r.get("gap"))),
            _nol_abu(_angka0(r.get("adp"))), _nol_abu(_angka0(r.get("ftap"))),
            _nol_abu(perlu),
-           n(_angka0(r.get("kandidat"))), n(_angka0(r.get("ongoing"))),
-           n(_angka0(r.get("hired"))), n(_angka0(r.get("pool"))),
+           n(_angka0(r.get("kandidat"))), n(_angka0(r.get("hired"))),
            n(_angka0(r.get("gagal")))]
     for tahap, slug in M.PROCESS_SLUG.items():
         for jenis in M.PROCESS_KINDS:
             sel.append(_proc_sel(pb, kunci, slug, jenis))
+    siap = _angka0(r.get("ready"))
+    sel.append(f'<span style="color:{theme.STATUS["good"]};font-weight:700">{siap}</span>'
+               if siap else _nol_abu(0))
     return sel
 
 
@@ -1313,7 +1313,7 @@ def _awal_bulan():
 
 @st.cache_data(show_spinner=False, ttl=C.CACHE_TTL_SECONDS)
 def _rekap_divisi(_ref, _hc, _adp, _bm, _dfc, site, mulai, akhir,
-                  status=()):
+                  status=(), jenis=()):
     """Semua yang dibutuhkan tabel: ringkasan divisi, level tiap divisi, dan
     sebaran prosesnya. Dihitung sekali, bukan per baris.
 
@@ -1327,6 +1327,19 @@ def _rekap_divisi(_ref, _hc, _adp, _bm, _dfc, site, mulai, akhir,
     orangnya ada di mana", dan itu tidak punya periode. Jendela waktunya sudah
     dipatok di dalam rumusnya sendiri: dua bulan terakhir, khusus kolom Failed.
     """
+    # Filter Staff / Non Staff berlaku untuk SELURUH tabel, bukan kolom kandidat
+    # saja: Need to hire untuk "Staff" harus memakai MPP Staff dan Actual Staff,
+    # kalau tidak angkanya membandingkan dua populasi yang berbeda. Struktur
+    # sheet tim juga begitu — tiap bloknya Staff atau Non Staff.
+    if jenis:
+        pilih = set(jenis)
+        _ref = _ref[_ref["status"].isin(pilih)]
+        _hc = _hc[_hc["status"].isin(pilih)]
+        if _adp is not None and len(_adp):
+            _adp = _adp[_adp["status"].isin(pilih)]
+        if _bm is not None and len(_bm) and "jenis" in _bm.columns:
+            _bm = _bm[_bm["jenis"].isin(pilih)]
+
     div = M.division_summary(_ref, _hc, _dfc, site=site, adp=_adp)
 
     stat = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in (status or ())]
@@ -1341,6 +1354,12 @@ def _rekap_divisi(_ref, _hc, _adp, _bm, _dfc, site, mulai, akhir,
     # baris, jadi kalau divisi dihitung terpisah, batasnya bisa berbeda dari
     # batas per level dan baris levelnya tidak menjumlah ke barisnya.
     pb_lvl = M.process_from_monitoring(_bm, site=site, statuses=stat)
+    # Kolom kandidat (Candidates / Onboarded / Ready to onboard / Failed) dibaca
+    # dari tab yang sama — satu sumber untuk seluruh blok kanan tabel.
+    kand_lvl = M.candidate_counts_monitoring(_bm, site=site, statuses=stat)
+    if len(kand_lvl):
+        pb_lvl = (pb_lvl.join(kand_lvl, how="outer").fillna(0).astype(int)
+                  if len(pb_lvl) else kand_lvl)
     pb_lvl = pb_lvl if len(pb_lvl) else None
 
     if pb_lvl is not None and len(pb_lvl):
@@ -1365,6 +1384,12 @@ def _rekap_divisi(_ref, _hc, _adp, _bm, _dfc, site, mulai, akhir,
                       "kandidat", "ongoing", "hired", "pool", "gagal"):
                 tambah[k] = 0
             div = pd.concat([div, tambah[div.columns]], ignore_index=True)
+        # Angka kandidat diambil alih dari monitoring, menggantikan hitungan
+        # lama dari fix_centralized — satu sumber, satu definisi.
+        for k in ("kandidat", "hired", "gagal", "ready"):
+            if k in pb_div.columns:
+                div[k] = (pb_div[k].reindex(div["divisi"]).fillna(0)
+                          .astype(int).values)
 
     level = {}
     for r in div.itertuples():
@@ -1379,7 +1404,8 @@ def _rekap_divisi(_ref, _hc, _adp, _bm, _dfc, site, mulai, akhir,
                       if str(i).startswith(awalan)
                       and str(i)[len(awalan):] not in punya]
             if kurang:
-                kolom = list(lvl.columns) if len(lvl.columns) else [
+                kolom0 = list(lvl.columns) if len(lvl.columns) else []
+                kolom = kolom0 or [
                     "level", "mpp", "actual", "gap", "adp", "ftap", "need",
                     "kandidat", "ongoing", "hired", "pool", "gagal", "level_code"]
                 t = pd.DataFrame(0, index=range(len(kurang)), columns=kolom)
@@ -1391,6 +1417,15 @@ def _rekap_divisi(_ref, _hc, _adp, _bm, _dfc, site, mulai, akhir,
                           "kandidat", "ongoing", "hired", "pool", "gagal"):
                     if k in lvl.columns:
                         lvl[k] = pd.to_numeric(lvl[k], errors="coerce").fillna(0).astype(int)
+            # Angka kandidat per level juga diambil alih dari monitoring, sama
+            # seperti barisan divisinya — kalau tidak, baris level dan baris
+            # divisi menghitung dari dua sumber yang berbeda.
+            if len(lvl):
+                kunci_l = [f"{r.divisi}{C.LEVEL_SEP}{x}" for x in lvl["level"]]
+                for k in ("kandidat", "hired", "gagal", "ready"):
+                    if k in pb_lvl.columns:
+                        lvl[k] = (pb_lvl[k].reindex(kunci_l).fillna(0)
+                                  .astype(int).values)
         level[r.divisi] = lvl
     return div, level, pb_div, pb_lvl
 
@@ -1423,7 +1458,7 @@ def page_division():
     site = None if (pilih or "All") == "All" else pilih
 
     hari_ini = pd.Timestamp.today().normalize().date()
-    mulai, akhir, status_p = filterbar("sd_f", [
+    mulai, akhir, jenis_p, status_p = filterbar("sd_f", [
         {"label": "Active from", "key": "sd_dari",
          "kind": "date", "value": _awal_bulan(),
          "help": "A candidate counts as active in the period when their own "
@@ -1432,6 +1467,12 @@ def page_division():
                  "columns only: MPP, Actual and ADP are today's snapshot."},
         {"label": "Active to", "key": "sd_sampai", "kind": "date",
          "value": hari_ini},
+        {"label": "Level type", "key": "sd_jenis", "kind": "multi",
+         "options": ["Staff", "Non Staff"], "default": [],
+         "placeholder": "Staff & Non Staff",
+         "help": "Narrows the whole table — MPP, Actual, ADP and the candidate "
+                 "columns together, the way each block of the team's sheet is "
+                 "either Staff or Non Staff."},
         {"label": "Process status", "key": "sd_status", "kind": "multi",
          "options": list(C.STATUS_OPTIONS), "default": list(C.STATUS_DEFAULT),
          "placeholder": "All statuses",
@@ -1457,11 +1498,14 @@ def page_division():
     est = _estimasi_semua(sf, df)
     periode = (f"{pd.Timestamp(mulai):%d %b %Y} – {pd.Timestamp(akhir):%d %b %Y}"
                if mulai and akhir else "all periods")
+    if jenis_p:
+        periode += " · " + ", ".join(jenis_p)
     if status_p:
         periode += " · " + ", ".join(status_p)
 
     div, level, pb_div, pb_lvl = _rekap_divisi(
-        ref, hc, adp, bm, dfc, site, mulai, akhir, tuple(status_p))
+        ref, hc, adp, bm, dfc, site, mulai, akhir, tuple(status_p),
+        tuple(jenis_p))
     if div.empty:
         st.markdown(theme.empty_state("No data yet", "—"), unsafe_allow_html=True)
         return
@@ -1471,9 +1515,12 @@ def page_division():
         1, judul, f"{len(div)} divisions · MPP vs. headcount today · "
                   f"candidates active {periode}"), unsafe_allow_html=True)
 
+    for k in ("kandidat", "hired", "gagal", "ready"):
+        if k not in div.columns:
+            div[k] = 0
     total = {k: int(div[k].sum()) for k in
              ("mpp", "actual", "gap", "adp", "ftap", "need", "kandidat",
-              "ongoing", "hired", "pool", "gagal")}
+              "hired", "gagal", "ready")}
     k = st.columns(5, gap="small")
     kartu = [
         ("MPP", total["mpp"], "planned headcount", "📋", theme.BRAND["navy"]),
@@ -1483,7 +1530,7 @@ def page_division():
         ("Need to hire", total["need"],
          f'shortfalls only, {n(total["adp"])} ADP deducted', "🎯",
          theme.STATUS["warn"]),
-        ("In process", total["ongoing"], f"active {periode}", "⏳",
+        ("Candidates", total["kandidat"], "still in process", "⏳",
          theme.STATUS["warn"]),
     ]
     for col, (lab, val, sub, emo, warna) in zip(k, kartu):
@@ -1529,9 +1576,9 @@ def page_division():
     total_sel = ["TOTAL", n(total["mpp"]), n(total["actual"]),
                  f'{total["gap"]:+d}', n(total["adp"]), n(total["ftap"]),
                  n(total["need"]),
-                 n(total["kandidat"]), n(total["ongoing"]), n(total["hired"]),
-                 n(total["pool"]), n(total["gagal"])] + [
-        n(jum(sl, jn)) for sl in M.PROCESS_SLUG.values() for jn in M.PROCESS_KINDS]
+                 n(total["kandidat"]), n(total["hired"]), n(total["gagal"])] + [
+        n(jum(sl, jn)) for sl in M.PROCESS_SLUG.values()
+        for jn in M.PROCESS_KINDS] + [n(total["ready"])]
 
     unduh_saja("sd_tabel", f"Summary by Division — {judul}",
                f"{len(div)} divisions · {periode}",
@@ -1570,6 +1617,41 @@ def page_division():
     if lpil and lpil != "—":
         nama_level = lpil.rsplit(" (", 1)[0]
         _detail_level("sd_drill", dfc, lt, sf, est, dpil, nama_level, site)
+
+    _panel_kandidat_divisi(bm, site, jenis_p, status_p, periode)
+
+
+def _panel_kandidat_divisi(bm, site, jenis_p, status_p, periode):
+    """Bagian 4: siapa saja yang sedang diproses, bukan hanya berapa banyak.
+
+    Tabel di atas menjawab "berapa"; bagian ini menjawab "siapa". Keduanya dari
+    tab monitoring yang sama, jadi jumlah barisnya di sini persis sama dengan
+    angka di kolom Candidates — daftar dan angkanya tidak mungkin berselisih.
+    """
+    b = bm
+    if b is not None and len(b) and jenis_p and "jenis" in b.columns:
+        b = b[b["jenis"].isin(set(jenis_p))]
+    stat = [C.STATUS_OPTIONS.get(x, str(x).upper()) for x in status_p]
+    orang = M.candidates_in_process(b, site=site, statuses=stat)
+
+    st.markdown(theme.section_heading(
+        4, "Candidates", "everyone currently in process, with their last stage"),
+        unsafe_allow_html=True)
+
+    if orang.empty:
+        st.markdown(theme.empty_state(
+            "No candidate in process", "Loosen the filters above."),
+            unsafe_allow_html=True)
+        return
+
+    with theme.card("sd_kandidat", "In process", f"{len(orang)} people · {periode}"):
+        tabel("sd_kandidat", "Candidates in process", periode,
+              ["Candidate", "Position", "Division", "Level", "Site",
+               "Last progress", "Status"],
+              [[theme.esc(r.candidate), theme.esc(r.position),
+                theme.esc(r.divisi), theme.esc(r.level), theme.esc(r.site),
+                theme.esc(r.last_progress), theme.result_pill(r.status)]
+               for r in orang.itertuples()], align="llllllr", max_rows=18)
 
 
 # ===========================================================================
