@@ -860,7 +860,7 @@ def _periode_kolom(periods: list[tuple[int, int]]) -> list[tuple[tuple[int, int]
 
 
 def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
-                    sites=None) -> pd.DataFrame:
+                    sites=None, dari=None, sampai=None) -> pd.DataFrame:
     """Onboarding per departemen untuk periode yang dipilih.
 
     `periods` = daftar (tahun, bulan). Tiap periode jadi satu kolom, ditutup
@@ -875,6 +875,8 @@ def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
     h = df[(df["status1"] == "CLOSE") & df["date_onboarding"].notna()].copy()
     if sites:
         h = h[h["loc"].isin(C.loc_values_for(sites))]
+    # Jendela tanggal mempersempit bulan yang dipilih sampai ke harinya.
+    h = h[_jendela(h["date_onboarding"], dari, sampai)]
     if h.empty:
         return pd.DataFrame()
 
@@ -898,7 +900,7 @@ def new_hire_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
 
 
 def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
-                   sites=None) -> pd.DataFrame:
+                   sites=None, dari=None, sampai=None) -> pd.DataFrame:
     """Onboarding per SITE untuk periode yang dipilih — bentuknya sama dengan New Hire.
 
     Periodenya memakai tanggal onboarding, jadi angkanya bisa disandingkan
@@ -910,6 +912,7 @@ def summary_matrix(df: pd.DataFrame, periods: list[tuple[int, int]],
     h = df[(df["status1"] == "CLOSE") & df["date_onboarding"].notna()].copy()
     if sites:
         h = h[h["loc"].isin(C.loc_values_for(sites))]
+    h = h[_jendela(h["date_onboarding"], dari, sampai)]
     if h.empty:
         return pd.DataFrame()
 
@@ -1060,17 +1063,41 @@ def _month_bounds(ref=None):
     return awal, awal + pd.offsets.MonthBegin(1)
 
 
-def _periode_mask(seri: pd.Series, periods) -> pd.Series:
-    """True untuk baris yang tanggalnya jatuh di salah satu (tahun, bulan) terpilih."""
+def _jendela(seri: pd.Series, dari=None, sampai=None) -> pd.Series:
+    """True untuk tanggal yang masuk jendela `dari`–`sampai` (dua ujung ikut)."""
+    ok = seri.notna()
+    if dari is not None:
+        ok &= seri >= pd.Timestamp(dari).normalize()
+    if sampai is not None:
+        ok &= seri <= pd.Timestamp(sampai).normalize()
+    return ok
+
+
+def _periode_mask(seri: pd.Series, periods, dari=None, sampai=None) -> pd.Series:
+    """True untuk baris yang tanggalnya masuk periode DAN jendela tanggal.
+
+    Dua saringan yang bekerja berlapis, bukan menggantikan satu sama lain:
+    `periods` memilih bulan-bulannya, `dari`/`sampai` mempersempitnya sampai
+    tanggal (arahan Navi, 11 Sep 2026 — "di bawah month itu ada mulai tanggal
+    berapa sampai berapa"). Memilih September lalu mempersempit ke 1–15 berarti
+    separuh pertama September saja.
+    """
     if not periods:
-        return pd.Series(True, index=seri.index)
-    ok = pd.Series(False, index=seri.index)
-    for thn, bln in periods:
-        ok |= (seri.dt.year == thn) & (seri.dt.month == bln)
-    return ok & seri.notna()
+        ok = pd.Series(True, index=seri.index)
+    else:
+        ok = pd.Series(False, index=seri.index)
+        for thn, bln in periods:
+            ok |= (seri.dt.year == thn) & (seri.dt.month == bln)
+    ok &= seri.notna()
+    if dari is not None:
+        ok &= seri >= pd.Timestamp(dari).normalize()
+    if sampai is not None:
+        ok &= seri <= pd.Timestamp(sampai).normalize()
+    return ok
 
 
-def on_progress(df: pd.DataFrame, periods=None, sites=None) -> dict[str, pd.DataFrame]:
+def on_progress(df: pd.DataFrame, periods=None, sites=None,
+                dari=None, sampai=None) -> dict[str, pd.DataFrame]:
     """Tiga panel On Progress, mengikuti rumus sheet ONP.
 
     Offering    status OPEN, tahap Offering, START REQ OFFERING di periode terpilih
@@ -1096,17 +1123,23 @@ def on_progress(df: pd.DataFrame, periods=None, sites=None) -> dict[str, pd.Data
 
     offering = _ambil(
         buka & prog.isin(ONP_OFFERING_PROGRESS)
-        & _periode_mask(d["start_offering"], periods), "start_offering")
+        & _periode_mask(d["start_offering"], periods, dari, sampai), "start_offering")
 
     mcu = _ambil(
         buka & prog.isin(ONP_MCU_PROGRESS)
-        & _periode_mask(d["ol_sent_to_candidate"], periods), "ol_sent_to_candidate")
+        & _periode_mask(d["ol_sent_to_candidate"], periods, dari, sampai),
+        "ol_sent_to_candidate")
 
     fit = d["result_fu_mcu"].astype(str).str.strip().str.upper() == "FIT TO WORK"
-    if periods:
-        onboard = _ambil(fit & _periode_mask(d["date_onboarding"], periods), "date_onboarding")
+    if periods or dari is not None or sampai is not None:
+        onboard = _ambil(
+            fit & _periode_mask(d["date_onboarding"], periods, dari, sampai),
+            "date_onboarding")
     else:
-        # Tanpa filter, ikuti rumus aslinya: yang akan datang, bukan riwayat.
+        # Tanpa filter sama sekali, ikuti rumus aslinya: yang akan datang, bukan
+        # riwayat. Begitu ada jendela tanggal, jendela itulah yang berlaku —
+        # kalau tidak, daftar nama Onboarding tidak akan pernah menampilkan yang
+        # sudah lewat, padahal itu yang dicari saat menengok bulan kemarin.
         hari_ini = pd.Timestamp.today().normalize()
         onboard = _ambil(fit & (d["date_onboarding"] > hari_ini), "date_onboarding")
 
@@ -1129,7 +1162,8 @@ def _tanggal_mpp(s) -> pd.Series:
     return hasil
 
 
-def resign(mpp: pd.DataFrame, periods=None, sites=None) -> pd.DataFrame:
+def resign(mpp: pd.DataFrame, periods=None, sites=None,
+           dari=None, sampai=None) -> pd.DataFrame:
     """Karyawan resign — replikasi rumus sheet "Karyawan Resign".
 
     Rumus aslinya menggabungkan dua QUERY atas sheet "Update MPP":
@@ -1164,7 +1198,7 @@ def resign(mpp: pd.DataFrame, periods=None, sites=None) -> pd.DataFrame:
     d["Level"] = pd.to_numeric(d.get("Level"), errors="coerce")
 
     if periods:
-        periode_ok = _periode_mask(d["End Date"], periods)
+        periode_ok = _periode_mask(d["End Date"], periods, dari, sampai)
     else:
         awal, berikut = _month_bounds()
         periode_ok = d["End Date"].between(awal, berikut, inclusive="left")
