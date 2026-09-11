@@ -217,6 +217,19 @@ MONITORING_LEVEL_ALIAS = {
 }
 
 
+# Level yang dihitung sebagai Non Staff. Sisanya Staff — sama dengan aturan
+# MPP2 (Level Code 11 = Non Staff, di bawahnya Staff).
+MONITORING_NON_STAFF = {"NON STAFF", "NON-STAFF", "MEKANIK", "OPERATOR"}
+
+
+def monitoring_level_type(nilai) -> str:
+    """Sebutan level -> "Staff" atau "Non Staff"."""
+    teks = str(nilai or "").strip().upper()
+    if not teks or teks == "NAN":
+        return ""
+    return "Non Staff" if teks in MONITORING_NON_STAFF else "Staff"
+
+
 def monitoring_level(nilai) -> str:
     """Sebutan level di tab monitoring -> nama level yang dipakai portal."""
     teks = str(nilai or "").strip()
