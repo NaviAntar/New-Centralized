@@ -133,8 +133,13 @@ def prepare(df: pd.DataFrame) -> pd.DataFrame:
     # yang sama melamar lebih dari satu posisi. Versi lama memakai nama sebagai
     # kunci lalu mengambil baris pertama, jadi 31 orang melihat proses yang
     # bukan miliknya.
-    pos = df["position_id"].fillna("—") if "position_id" in df.columns else "—"
-    df["cand_key"] = df["candidate_id"].astype(str) + " · " + pos.astype(str)
+    if "position_id" in df.columns:
+        pos = df["position_id"].fillna("—").astype(str)
+    else:
+        # Sumber tanpa kolom position_id (mis. tab monitoring) tetap harus bisa
+        # dibaca: kuncinya jatuh kembali ke nama saja.
+        pos = pd.Series("—", index=df.index)
+    df["cand_key"] = df["candidate_id"].astype(str) + " · " + pos
     df["is_duplicate_name"] = df["candidate_id"].duplicated(keep=False)
 
     # Kalau kunci gabungan pun masih kembar, bedakan dengan nomor urut supaya
@@ -2259,6 +2264,86 @@ def process_from_monitoring(bm: pd.DataFrame, site: str | None = None,
 
     out.index.name = "_grup"
     return out
+
+
+def candidate_counts_monitoring(bm: pd.DataFrame, site: str | None = None,
+                                statuses=None) -> pd.DataFrame:
+    """Kolom kandidat di Summary by Division, dari tab monitoring.
+
+    Definisinya diperbarui 11 Sep 2026 atas arahan Navi — masing-masing kolom
+    kini menjawab satu pertanyaan yang berbeda, bukan memotong-motong satu
+    populasi yang sama:
+
+    ``Candidates``      kandidat yang prosesnya MASIH BERJALAN (status OPEN).
+                        Kolom "In process" lama dihapus karena menanyakan hal
+                        yang persis sama.
+    ``Onboarded``       yang tanggal onboarding-nya SUDAH LEWAT — pembatasnya
+                        hari ini. Sebelumnya cukup berstatus CLOSE, padahal
+                        sebagian di antaranya baru dijadwalkan.
+    ``Ready to onboard`` sudah FIT TO WORK dan tanggal onboarding-nya masih di
+                        depan: orangnya siap, tinggal menunggu harinya. Ini
+                        kolom baru, ditaruh persis setelah blok MCU — sama
+                        seperti kolom "Ready On Board" di sheet tim.
+    ``Failed``          status FAILED.
+
+    Hasilnya ber-index `divisi ▸ level`, sama dengan kolom proses, supaya angka
+    divisi bisa diturunkan dengan menjumlahkan baris levelnya.
+    """
+    kolom = ["kandidat", "hired", "ready", "gagal"]
+    if bm is None or bm.empty:
+        return pd.DataFrame(columns=kolom)
+
+    d = bm if not site else bm[bm["site"] == site]
+    if d.empty:
+        return pd.DataFrame(columns=kolom)
+
+    mau = {str(x).strip().upper() for x in (statuses or STATUS_BERJALAN)}
+    kunci = d["divisi"].astype(str) + C.LEVEL_SEP + d["level"].astype(str)
+    out = pd.DataFrame(index=sorted(kunci.unique()))
+
+    hari_ini = pd.Timestamp.today().normalize()
+    tgl = d.get("onboard_date")
+    if tgl is None:
+        tgl = pd.Series(pd.NaT, index=d.index)
+    res_mcu = d.get("res_MCU", pd.Series("", index=d.index))
+
+    peta = {
+        "kandidat": d["status"].isin(mau),
+        "hired": tgl.notna() & (tgl <= hari_ini),
+        "ready": res_mcu.isin(PROCESS_PASSED["MCU"]) & tgl.notna() & (tgl > hari_ini),
+        "gagal": d["status"].eq("FAILED"),
+    }
+    for k, m in peta.items():
+        out[k] = (kunci[m].value_counts().reindex(out.index).fillna(0).astype(int))
+    out.index.name = "_grup"
+    return out
+
+
+def candidates_in_process(bm: pd.DataFrame, site: str | None = None,
+                          statuses=None) -> pd.DataFrame:
+    """Daftar kandidat yang prosesnya masih berjalan, beserta tahap terakhirnya.
+
+    Isi bagian "Candidates" di Summary by Division: siapa saja yang sedang
+    diproses, bukan hanya berapa banyak.
+    """
+    kolom = ["candidate", "position", "divisi", "level", "site",
+             "last_progress", "status"]
+    if bm is None or bm.empty:
+        return pd.DataFrame(columns=kolom)
+    d = bm if not site else bm[bm["site"] == site]
+    mau = {str(x).strip().upper() for x in (statuses or STATUS_BERJALAN)}
+    d = d[d["status"].isin(mau)]
+    if d.empty:
+        return pd.DataFrame(columns=kolom)
+    ada = [c for c in kolom if c in d.columns]
+    out = d[ada].copy()
+    for c in kolom:
+        if c not in out.columns:
+            out[c] = ""
+    urut = {t: i for i, t in enumerate(STAGE_ORDER)}
+    out["_u"] = out["last_progress"].map(lambda v: urut.get(str(v).strip(), 99))
+    return (out.sort_values(["_u", "divisi", "candidate"])
+               .drop(columns="_u")[kolom].reset_index(drop=True))
 
 
 def process_chain_monitoring(bm: pd.DataFrame, site: str | None = None,
