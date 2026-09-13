@@ -595,7 +595,6 @@ def applicable_stages(level: str) -> list[str]:
 RECRUITER_NAMES = {
     "PURI": "Puranti Nurparida",
     "PUR": "Puranti Nurparida",                   # varian lama di sebagian baris
-    "AWL": "Awaluddin",
     "DIV": "Alfina Diva Ramadhanty",
     "FLI": "Muhammad Rafli",
     "UMY": "Shaumy Fadhila",
@@ -762,14 +761,23 @@ ACHIEVEMENT_MAX = 120.0
 # Nama yang tampil sebagai baris tersendiri di tabel Performance, sesuai urutan
 # yang Navi berikan. Nama tanpa inisial tetap muncul (nilai nol) supaya terlihat
 # bahwa orangnya ada tapi datanya belum masuk.
+#
+# Perubahan 13 Sep 2026 (arahan Navi): Ermytasari Punaga ditambahkan, Awaluddin
+# dikeluarkan. Yang dikeluarkan dari daftar ini tidak hilang — resolve_recruiter
+# memulangkan None untuk nama di luar roster, dan _screening_owner
+# mengelompokkannya ke baris OTHER_RECRUITER_LABEL. Karena itu inisial "AWL"
+# ikut dicabut dari RECRUITER_NAMES: kalau ditinggal, namanya tetap terpetakan
+# dan barisnya muncul sendiri lagi.
 RECRUITER_ROSTER = [
     "Puranti Nurparida",
-    "Awaluddin",
     "Alfina Diva Ramadhanty",
     "Muhammad Rafli",
     "Muhammad Faiq Kenzie Widodo",
     "Shaumy Fadhila",
     "Tallita Ayu Salsabila",
+    # Di kolom PIC sheet tertulis "ERMYTASARI PUNAGA" — huruf besar semua.
+    # _kunci_nama() menyamakan besar-kecil, jadi tidak perlu inisial sendiri.
+    "Ermytasari Punaga",
 ]
 
 # Inisial di luar roster digabung jadi satu baris dengan label ini (keputusan
