@@ -988,6 +988,91 @@ def position_options(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
     return dict(zip(label, zip(g["position_name"], g["loc"])))
 
 
+# Status kandidat yang dianggap "menempel pada PRF ini". Persis dua nilai yang
+# dipatok rumus Candidate1 di sheet PRF Tracking:
+#     ('Backend Monitoring'!K:K="Open") + ('Backend Monitoring'!K:K="Close")
+# FAILED dan HOLD sengaja tidak ikut: PRF menanyakan "permintaan ini sudah
+# terisi siapa", dan orang yang gagal tidak mengisi apa pun.
+PRF_CANDIDATE_STATUS = ("OPEN", "CLOSE")
+
+
+def prf_candidates(bm: pd.DataFrame, request_number: str | None = None,
+                   statuses=PRF_CANDIDATE_STATUS) -> pd.DataFrame:
+    """Kandidat yang menempel pada sebuah PRF, dibaca dari tab MONITORING.
+
+    Menirukan rumus `Candidate1` di sheet PRF Tracking apa adanya::
+
+        TEXTJOIN(CHAR(10); TRUE;
+          FILTER('Backend Monitoring'!B:B & " (" & 'Backend Monitoring'!L:L & ")";
+                 'Backend Monitoring'!N:N = <request_number>;
+                 ('Backend Monitoring'!K:K="Open") + (…="Close")))
+
+    B = Nama, L = LAST PROGRESS 1, K = STATUS, N = No PRF.
+
+    Kuncinya **No PRF**, bukan pasangan (posisi, site) yang dipakai mode By
+    Position (arahan Navi, 13 Sep 2026: "khusus untuk bagian tracking by prf
+    sesuaikan dengan link monitoring saja jangan yang fix centralized").
+    Bedanya nyata: satu nomor PRF menunjuk satu permintaan, sedangkan pasangan
+    posisi+site menyatukan semua PRF untuk posisi yang sama.
+
+    `request_number` kosong berarti seluruh baris yang punya No PRF — dipakai
+    untuk menghitung jumlah kandidat per PRF sekaligus di halaman PRF Tracking.
+    """
+    kolom = ["no_prf", "candidate", "last_progress", "last_progress_1",
+             "position", "site", "level", "status"]
+    if bm is None or getattr(bm, "empty", True) or "no_prf" not in bm.columns:
+        return pd.DataFrame(columns=kolom)
+
+    d = bm.copy()
+    d["no_prf"] = d["no_prf"].astype(str).str.strip()
+    d = d[d["no_prf"].ne("") & ~d["no_prf"].str.lower().isin(["nan", "none"])]
+    if statuses:
+        mau = {str(x).strip().upper() for x in statuses}
+        d = d[d["status"].astype(str).str.strip().str.upper().isin(mau)]
+    if request_number:
+        d = d[d["no_prf"] == str(request_number).strip()]
+    if d.empty:
+        return pd.DataFrame(columns=kolom)
+
+    for k in kolom:
+        if k not in d.columns:
+            d[k] = ""
+    return (d[kolom].astype({"candidate": str})
+            .sort_values(["no_prf", "candidate"]).reset_index(drop=True))
+
+
+def prf_candidate_counts(bm: pd.DataFrame) -> pd.Series:
+    """Berapa kandidat menempel pada tiap nomor PRF — index = No PRF."""
+    d = prf_candidates(bm)
+    if d.empty:
+        return pd.Series(dtype=int)
+    return d.groupby("no_prf")["candidate"].nunique()
+
+
+def prf_options(prf: pd.DataFrame, bm: pd.DataFrame | None = None) -> dict:
+    """Label pencarian -> baris PRF, untuk kotak Tracking Posisi mode By PRF.
+
+    Jumlah kandidat di labelnya dihitung dari tab MONITORING lewat kolom
+    **No PRF** (lihat prf_candidates), bukan dari fix_centralized lewat
+    pasangan posisi+site seperti versi sebelumnya — arahan Navi, 13 Sep 2026.
+    """
+    if prf is None or getattr(prf, "empty", True):
+        return {}
+    d = prf[prf["prf_id"].astype(str).str.strip().ne("")].copy()
+    if d.empty:
+        return {}
+
+    jumlah = prf_candidate_counts(bm) if bm is not None else pd.Series(dtype=int)
+    d = d.sort_values(["tanggal_pengajuan", "prf_id"], ascending=[False, True])
+    hasil = {}
+    for r in d.itertuples():
+        kand = int(jumlah.get(r.prf_id, 0))
+        label = (f"{r.prf_id}  ·  {r.position_name}  ·  {r.site or '—'}"
+                 f"  ·  {kand} candidate{'s' if kand != 1 else ''}")
+        hasil[label] = r
+    return hasil
+
+
 def position_candidates(df: pd.DataFrame, lt: pd.DataFrame, position_name: str,
                         loc: str | None = None, sf: pd.DataFrame | None = None,
                         estimasi: pd.Series | None = None) -> pd.DataFrame:
