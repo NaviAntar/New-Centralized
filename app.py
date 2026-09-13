@@ -862,7 +862,7 @@ def page_weekly():
     # New Hire, Ringkasan per site, On Progress, dan Karyawan resign — membaca
     # pilihan yang sama.
     (tahun_pilih, bulan_pilih, site_pilih,
-     mulai_p, akhir_p, _) = filterbar("wk", [[
+     _, mulai_p, akhir_p, _) = filterbar("wk", [[
         {"label": "Year", "key": "wk_year", "kind": "multi",
          "options": [str(y) for y in tahun_ada], "default": thn_default, "width": 1,
          "placeholder": "Year"},
@@ -873,13 +873,17 @@ def page_weekly():
          "options": list(C.SITES), "default": [], "width": 1,
          "placeholder": "All sites"},
     ], [
+        # Baris kedua ditaruh MENJOROK ke tengah, tepat di bawah Month: rentang
+        # tanggal ini mempersempit Month, bukan filter yang berdiri sendiri —
+        # letaknya harus memperlihatkan hubungan itu (arahan Navi, 12 Sep 2026).
+        {"label": "", "key": "wk_pad_kiri", "kind": "spacer", "width": 1},
         {"label": "From date", "key": "wk_from", "kind": "date", "width": 1,
          "help": "Narrows the months above down to a day range. Every section on "
                  "this page follows it, each using its own stage date: onboarding "
                  "by onboarding date, Offering by start of offering, MCU by the "
                  "date the offering letter was sent, Resignations by end date."},
         {"label": "To date", "key": "wk_to", "kind": "date", "width": 1},
-        {"label": "", "key": "wk_pad", "kind": "spacer", "width": 2},
+        {"label": "", "key": "wk_pad_kanan", "kind": "spacer", "width": 1},
     ]])
 
     periods = periode_terpilih(tahun_pilih, bulan_pilih)
@@ -1254,24 +1258,24 @@ def _detail_level(kunci, dfc, lt, sf, est, divisi, nama_level, site):
 # itu inti dari grouping ala Excel: barisnya bertingkat, kolomnya satu.
 KOLOM_DIVISI = [
     {"label": "Division / Level", "align": "l"},
+    # Blok 1 — keadaan organisasi hari ini
     {"label": "MPP", "align": "r"},
     {"label": "Actual", "align": "r"},
     {"label": "Gap", "align": "r"},
-    {"label": "ADP", "align": "r"},
-    {"label": "FTAP", "align": "r"},
+    # Blok 2 — kebutuhan rekrutmen
+    {"label": "ADP", "align": "r", "sep": True},
     {"label": "Need to hire", "align": "r"},
-    {"label": "Candidates", "align": "r", "sep": True},
-    {"label": "Onboarded", "align": "r"},
-    {"label": "Failed", "align": "r"},
-    {"label": "Interview User", "align": "r", "sep": True,
-     "sub": ["On prog", "Passed", "Failed"]},
-    {"label": "Psychotest", "align": "r", "sep": True,
-     "sub": ["On prog", "Passed", "Failed"]},
-    {"label": "Offering", "align": "r", "sep": True,
-     "sub": ["On prog", "Passed", "Failed"]},
-    {"label": "MCU", "align": "r", "sep": True,
-     "sub": ["On prog", "Passed", "Failed"]},
-    {"label": "Ready to onboard", "align": "r", "sep": True},
+    # Blok 3-6 — tahap proses
+    {"label": "Interview Process", "align": "r", "sep": True,
+     "sub": ["On Progress", "Passed", "Failed"]},
+    {"label": "Psychotest Process", "align": "r", "sep": True,
+     "sub": ["On Progress", "Passed", "Failed"]},
+    {"label": "Offering Process", "align": "r", "sep": True,
+     "sub": ["On Progress", "Passed", "Failed"]},
+    {"label": "MCU Process", "align": "r", "sep": True,
+     "sub": ["On Progress", "Passed", "Failed"]},
+    # Blok 7 — hasil akhir
+    {"label": "Ready On Board", "align": "r", "sep": True},
     {"label": "Est Dev", "align": "r"},
 ]
 # Judul datar untuk unduhan Excel/PNG: header dua tingkat tidak punya padanan
@@ -1283,10 +1287,11 @@ KOLOM_DIVISI = [
 # lalu menghitung baris divisi DAN baris levelnya sekaligus, hasilnya dua kali
 # lipat (temuan Navi, 11 Sep 2026). Dengan dua kolom, "baris divisi" = baris yang
 # kolom Level-nya kosong, dan penjumlahannya tidak mungkin salah.
-HEAD_DIVISI = ["Division", "Level", "MPP", "Actual", "Gap", "ADP", "FTAP",
-               "Need to hire", "Candidates", "Onboarded", "Failed"] + [
-    f"{t} — {k}" for t in ("Interview User", "Psychotest", "Offering", "MCU")
-    for k in ("On prog", "Passed", "Failed")] + ["Ready to onboard", "Est Dev"]
+HEAD_DIVISI = ["Division", "Level", "MPP", "Actual", "Gap", "ADP",
+               "Need to hire"] + [
+    f"{t} — {k}" for t in ("Interview Process", "Psychotest Process",
+                           "Offering Process", "MCU Process")
+    for k in ("On Progress", "Passed", "Failed")] + ["Ready On Board", "Est Dev"]
 ALIGN_DIVISI = "ll" + "r" * (len(HEAD_DIVISI) - 2)
 
 
@@ -1331,6 +1336,21 @@ def _angka0(v):
         return 0
 
 
+def _need_sel(v):
+    """Need to hire selalu bertanda: +7 kurang tujuh orang, -3 kelebihan tiga.
+
+    Tanda ditulis di kedua arah, bukan hanya di yang minus (arahan Navi,
+    12 Sep 2026). Kolom ini dulu dipotong di nol, jadi divisi yang kelebihan
+    orang tampak seolah pas — dan TOTAL-nya hanya menjumlahkan kekurangan.
+    Sekarang kelebihan ikut tercatat dan ikut menjumlah.
+    """
+    v = int(v)
+    if not v:
+        return f'<span style="color:{theme.NEUTRAL["text_soft"]}">0</span>'
+    warna = theme.STATUS["bad"] if v < 0 else theme.STATUS["good"]
+    return f'<span style="color:{warna};font-weight:700">{v:+d}</span>'
+
+
 def _estdev_sel(v):
     """Est Dev = Need to hire - Ready to onboard: sisa yang benar-benar harus dicari.
 
@@ -1349,26 +1369,23 @@ def _estdev_sel(v):
     v = int(v)
     if not v:
         return f'<span style="color:{theme.NEUTRAL["text_soft"]}">0</span>'
-    warna = theme.STATUS["good"] if v < 0 else theme.NEUTRAL["text"]
-    return f'<span style="color:{warna};font-weight:700">{v}</span>'
+    warna = theme.STATUS["bad"] if v < 0 else theme.STATUS["good"]
+    return f'<span style="color:{warna};font-weight:700">{v:+d}</span>'
 
 
 def _baris_divisi(nama, r, pb, kunci):
     """Satu baris tabel — dipakai baris divisi maupun baris level di bawahnya."""
     mpp, aktual = _angka0(r.get("mpp")), _angka0(r.get("actual"))
-    perlu = _angka0(r.get("need", max(mpp - aktual, 0)))
+    perlu = _angka0(r.get("need", aktual - mpp))
     sel = [nama, n(mpp), n(aktual), _gap_sel(_angka0(r.get("gap"))),
-           _nol_abu(_angka0(r.get("adp"))), _nol_abu(_angka0(r.get("ftap"))),
-           _nol_abu(perlu),
-           n(_angka0(r.get("kandidat"))), n(_angka0(r.get("hired"))),
-           n(_angka0(r.get("gagal")))]
+           _nol_abu(_angka0(r.get("adp"))), _need_sel(perlu)]
     for tahap, slug in M.PROCESS_SLUG.items():
         for jenis in M.PROCESS_KINDS:
             sel.append(_proc_sel(pb, kunci, slug, jenis))
     siap = _angka0(r.get("ready"))
     sel.append(f'<span style="color:{theme.STATUS["good"]};font-weight:700">{siap}</span>'
                if siap else _nol_abu(0))
-    sel.append(_estdev_sel(perlu - siap))
+    sel.append(_estdev_sel(perlu + siap))
     return sel
 
 
@@ -1550,8 +1567,8 @@ def page_division():
          "help": "Which processes count as live. <In process> is the default "
                  "and matches the team's sheet: On progress and Passed only "
                  "count candidates still moving. Failed always ignores this "
-                 "filter — a failed candidate is never in process. MPP, Actual, "
-                 "ADP and FTAP never move."},
+                 "filter — a failed candidate is never in process. MPP, Actual "
+                 "and ADP never move."},
     ])
     if isinstance(mulai, (list, tuple)):
         mulai = mulai[0] if mulai else None
@@ -1598,11 +1615,16 @@ def page_division():
         ("Actual", total["actual"], "active employees", "👥", theme.BRAND["orange"]),
         ("Gap", f'{total["gap"]:+d}', "actual − MPP", "⚖️",
          theme.STATUS["bad"] if total["gap"] < 0 else theme.STATUS["good"]),
-        ("Need to hire", total["need"],
-         f'shortfalls only, {n(total["adp"])} ADP deducted', "🎯",
-         theme.STATUS["warn"]),
-        ("Candidates", total["kandidat"], "still in process", "⏳",
-         theme.STATUS["warn"]),
+        # Kartu ini menjumlah kekurangan DAN kelebihan, bukan kekurangan saja.
+        # Minus = kurang orang, plus = kelebihan — tanda yang sama dengan sheet.
+        # Keduanya ikut menjumlah, bukan yang minus saja.
+        ("Need to hire", f'{int(total["need"]):+d}',
+         f'shortfalls net of surpluses, {n(total["adp"])} ADP counted', "🎯",
+         theme.STATUS["bad"] if total["need"] < 0 else theme.STATUS["good"]),
+        ("Est Dev", f'{int(total["need"]) + int(total["ready"]):+d}',
+         f'need to hire + {n(total["ready"])} ready on board', "📌",
+         theme.STATUS["bad"] if total["need"] + total["ready"] < 0
+         else theme.STATUS["good"]),
     ]
     for col, (lab, val, sub, emo, warna) in zip(k, kartu):
         with col:
@@ -1644,13 +1666,15 @@ def page_division():
         return int(pb_div.reindex(div["divisi"])[f"{slug}_{jenis}"]
                    .fillna(0).sum())
 
+    # TOTAL Need to hire menjumlah baris minus DAN plus apa adanya — divisi yang
+    # kelebihan orang ikut mengurangi, bukan diabaikan (arahan Navi, 12 Sep 2026).
     total_sel = ["TOTAL", n(total["mpp"]), n(total["actual"]),
-                 f'{total["gap"]:+d}', n(total["adp"]), n(total["ftap"]),
-                 n(total["need"]),
-                 n(total["kandidat"]), n(total["hired"]), n(total["gagal"])] + [
+                 f'{total["gap"]:+d}', n(total["adp"]),
+                 f'{int(total["need"]):+d}'] + [
         n(jum(sl, jn)) for sl in M.PROCESS_SLUG.values()
         for jn in M.PROCESS_KINDS] + [
-        n(total["ready"]), n(int(total["need"]) - int(total["ready"]))]
+        n(total["ready"]),
+        f'{int(total["need"]) + int(total["ready"]):+d}']
 
     unduh_saja("sd_tabel", f"Summary by Division — {judul}",
                f"{len(div)} divisions · {periode}",
