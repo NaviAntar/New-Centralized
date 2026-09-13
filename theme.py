@@ -224,8 +224,25 @@ def _data_uri(path: Path) -> str | None:
     return f"data:image/{mime};base64,{b64}"
 
 
-def image_uri(name: str) -> str | None:
-    return _data_uri(IMAGES_DIR / name)
+def image_uri(*names: str) -> str | None:
+    """Data-URI gambar pertama yang ketemu, dicari di beberapa tempat.
+
+    Logonya pernah tidak muncul sama sekali di Streamlit Cloud karena dua hal
+    sekaligus: berkasnya bernama `logo_putih.png` sementara kode memintanya
+    sebagai `logo_putih (2).png`, dan letaknya di `assets/` sementara kode
+    mencarinya di `assets/images/`. Keduanya gagal diam-diam — `_data_uri`
+    mengembalikan None dan header tampil tanpa logo, tanpa pesan apa pun.
+
+    Sekarang beberapa nama dan beberapa folder dicoba berurutan, jadi memindah
+    atau mengganti nama berkasnya tidak lagi menghilangkan logo (temuan Navi,
+    12 Sep 2026).
+    """
+    for nama in names:
+        for folder in (IMAGES_DIR, ASSETS_DIR, ASSETS_DIR.parent):
+            uri = _data_uri(folder / nama)
+            if uri:
+                return uri
+    return None
 
 
 def icon_svg(name: str, size: int = 16, color: str | None = None) -> str:
@@ -1373,7 +1390,7 @@ def inject_css():
 # Komponen
 # ---------------------------------------------------------------------------
 def header_band(title: str, subtitle: str = "", chips: list[str] | None = None) -> str:
-    logo = image_uri("logo_putih (2).png")
+    logo = image_uri("logo_putih.png", "logo_putih (2).png", "logo_dh_e.png")
     logo_html = f'<img class="logo" src="{logo}" alt="PT Darma Henwa"/><div class="rule"></div>' if logo else ""
     chips_html = "".join(f'<div class="chip">{c}</div>' for c in (chips or []))
     return (
@@ -2079,8 +2096,17 @@ _GROUP_CSS = """
 .dh-gt tr.h2 th { top:26px; background:__NAVY__; font-size:9px; height:24px;
   letter-spacing:.04em; opacity:.97; border-top:1px solid rgba(255,255,255,.16); }
 .dh-gt th.grp { text-align:center; }
-.dh-gt th.sep, .dh-gt td.sep { border-left:1px solid __BORDER__; }
-.dh-gt th.sep { border-left:1px solid rgba(255,255,255,.24); }
+/* Pemisah antar blok kolom. Sheet tim memisahkan MPP-Actual-Gap dari
+   ADP-Need to hire, lalu tiap tahap proses, dengan kotak sendiri-sendiri.
+   Di sini pemisahnya dibuat tebal dan diberi selok abu tipis supaya blok
+   terbaca terpisah TANPA memecah tabelnya jadi beberapa tabel — kolomnya
+   tetap satu baris, masih bisa dijumlahkan menurun (arahan Navi, 12 Sep 2026). */
+.dh-gt th.sep, .dh-gt td.sep {
+  border-left:3px solid __BORDER__;
+  box-shadow:inset 5px 0 0 -2px __WASH__;
+}
+.dh-gt th.sep { border-left:3px solid rgba(255,255,255,.34); box-shadow:none; }
+.dh-gt tbody tr.total > td.sep { border-left:3px solid rgba(255,255,255,.34); }
 .dh-gt td {
   padding:6px 10px; border-bottom:1px solid __BSOFT__; white-space:nowrap;
   color:__TEXT__; font-variant-numeric:tabular-nums; background:__CARD__;
