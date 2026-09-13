@@ -478,6 +478,19 @@ def load_process_monitoring(source: str | pd.DataFrame | None = None) -> pd.Data
                      if posisi is not None else ""),
         "last_progress": (progres.astype("string").str.strip().fillna("")
                           if progres is not None else ""),
+        # LAST PROGRESS 1 dibawa terpisah: rumus Candidate1 di sheet PRF
+        # Tracking memakai kolom ini, sedangkan Candidate2 memakai LAST
+        # PROGRESS. Keduanya tidak selalu sama.
+        "last_progress_1": (df["LAST PROGRESS 1"].astype("string").str.strip()
+                            .fillna("") if "LAST PROGRESS 1" in df.columns else ""),
+        # Nomor PRF yang menyambungkan kandidat ke sheet PRF Tracking. Kolom ini
+        # BARU dan masih hampir kosong (6 dari 3.944 baris per 13 Sep 2026) —
+        # tim baru mulai mengisinya. Bukan kolom yang salah baca; memang belum
+        # terisi, dan halaman yang memakainya akan ikut terisi dengan
+        # sendirinya begitu datanya masuk.
+        "no_prf": (df["No PRF"].astype("string").str.strip()
+                   .fillna("").replace("NAN", "")
+                   if "No PRF" in df.columns else ""),
         "onboard_date": (pd.to_datetime(onboard, errors="coerce", dayfirst=True)
                          if onboard is not None else pd.NaT),
     }, index=df.index)
