@@ -1895,12 +1895,14 @@ def prepare_reforecast(df: pd.DataFrame) -> pd.DataFrame:
 
     Tiga hal yang dibereskan di sini, semuanya arahan Navi 11 Sep 2026:
 
-    1. **Reforecast kosong memakai Budget.** 17 baris di MPP2 — hampir semuanya
-       FTAP di BCP dan KCP — hanya diisi Budget, kolom Reforecast-nya dibiarkan
-       kosong. Membacanya sebagai nol membuang 74 headcount yang sudah
-       dianggarkan, dan itulah sebabnya budget FTAP "kok kayak gak terhitung".
-       Reforecast kosong artinya rencananya belum direvisi, jadi budget aslinya
-       yang berlaku.
+    1. **MPP dibaca dari kolom Reforecast SAJA, tanpa menambal dengan Budget.**
+       Ada 17 baris di MPP2 (HCM di BCP dan KCP) yang Reforecast-nya kosong
+       sementara Budget-nya terisi, total 74 orang. Portal sempat menambalnya
+       dengan Budget, dan itulah persis selisih 74 terhadap sheet: rumus sheet
+       `SUMIFS('MPP2'!J:J; …)` hanya membaca kolom Reforecast, jadi baris itu
+       dihitung nol. Sejak 12 Sep 2026 portal mengikuti sheet — Navi menegaskan
+       Copy of Summary by Division yang benar. Kalau 74 itu memang mau masuk,
+       yang diperbaiki kolom Reforecast di MPP2, bukan rumus di sini.
     2. **Posisi FTAP dihitung ke divisi tujuannya**, dibaca dari nama posisinya
        ("FTAP - Cost Control" -> Project Control). Di kolom Divisi semuanya
        tertulis Human Capital Management, dan itu membuat HCM tampak jauh lebih
@@ -1928,7 +1930,7 @@ def prepare_reforecast(df: pd.DataFrame) -> pd.DataFrame:
         "divisi": divisi.map(C.merge_division),
         "level_code": d["Level Code"].astype(str).str.strip(),
         "status": d["Status"].astype(str).str.strip(),
-        "mpp": reforecast.fillna(budget).fillna(0),
+        "mpp": reforecast.fillna(0),
         "budget": budget.fillna(0),
         "ftap": ftap.fillna(False),
     })
@@ -2441,7 +2443,22 @@ def process_chain(sf: pd.DataFrame, df: pd.DataFrame, cand_keys=None,
 def _need_to_hire(out: pd.DataFrame) -> pd.Series:
     """Berapa orang yang masih harus direkrut dari luar.
 
-        MPP − Actual − ADP,  minimal nol
+        Gap + ADP  =  (Actual − MPP) + ADP
+
+    **Tandanya mengikuti sheet**: MINUS berarti kurang orang, PLUS berarti
+    kelebihan. Portal sempat membalik tandanya supaya kolom "Need to hire"
+    berisi angka positif, tapi itu membuat Operation tertulis +651 di portal
+    sementara sheet menulis −673 untuk baris yang sama — dua tampilan yang
+    tidak bisa disandingkan. Sejak 12 Sep 2026 tandanya disamakan dengan
+    Copy of Summary by Division, sumber yang Navi tetapkan sebagai acuan.
+
+    **Tidak dipotong di nol.** Divisi yang isinya melebihi MPP menghasilkan
+    angka plus, dan angka itu ikut menjumlah ke TOTAL. Memotongnya membuat
+    TOTAL hanya menjumlahkan kekurangan dan menutupi kelebihan — "bangkrut
+    nanti perusahaan kalau gitu".
+
+    ADP menambah karena orangnya sudah menempati posisi itu sebagai acting,
+    jadi kursinya tidak lagi perlu dicarikan orang dari luar.
 
     Sheet menulisnya bertanda terbalik (`ADP + Gap`, Gap = Actual − MPP, negatif
     berarti kurang orang). Di portal tandanya dibalik supaya kolom bernama "Need
@@ -2458,7 +2475,7 @@ def _need_to_hire(out: pd.DataFrame) -> pd.Series:
     murni keterangan: berapa dari Actual itu peserta program.
     """
     adp = out["adp"] if "adp" in out.columns else 0
-    return (out["mpp"] - out["actual"] - adp).clip(lower=0)
+    return out["actual"] + adp - out["mpp"]
 
 
 def _hitung_ftap(hc: pd.DataFrame, kunci: str) -> pd.Series:
