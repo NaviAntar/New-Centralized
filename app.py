@@ -822,22 +822,131 @@ def _mode_departemen(df, sf, lt):
         "start date for anyone still OPEN.", block=True), unsafe_allow_html=True)
 
 
+def _mode_prf(df, sf, lt):
+    """Satu PRF, lihat sudah sejauh mana permintaannya dipenuhi.
+
+    **Sumbernya tab MONITORING, bukan fix_centralized** (arahan Navi, 13 Sep
+    2026). Kuncinya kolom **No PRF** di monitoring, yang dicocokkan langsung ke
+    Request Number di sheet PRF Tracking — persis rumus `Candidate1` di sheet
+    itu. Versi sebelumnya menyambung lewat pasangan (nama posisi, site), dan
+    itu menyatukan semua PRF untuk posisi yang sama jadi satu daftar kandidat.
+
+    Filternya tetap sama dengan mode By Position — bulan Screening CV dan site —
+    hanya saja di sini keduanya menyaring baris monitoring, bukan baris
+    fix_centralized.
+    """
+    d, label = _filter_posisi(df, sf)
+    try:
+        prf = get_prf()
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"The PRF data could not be loaded.\n\n{exc}")
+        return
+    try:
+        bm = get_monitoring()
+    except Exception as exc:  # noqa: BLE001
+        st.error(f"The monitoring sheet could not be loaded.\n\n{exc}")
+        return
+
+    pilihan = M.prf_options(prf, bm)
+    if not pilihan:
+        st.markdown(theme.empty_state(
+            "No PRF yet", "The PRF sheet could not be read, or it is empty."),
+            unsafe_allow_html=True)
+        return
+
+    with st.container(key="filterbar_tp_prf"):
+        judul = st.selectbox(
+            "Find a PRF — type the request number or the position",
+            list(pilihan), key="tp_prf_pick", filter_mode="contains",
+            help="Newest request first. The candidate count comes from the "
+                 "monitoring sheet's No PRF column.")
+    r = pilihan[judul]
+
+    kand = M.prf_candidates(bm, r.prf_id)
+    # Filter SITE di atas ikut berlaku — dibaca langsung dari widget-nya, bukan
+    # ditebak dari teks label. Filter BULAN tidak berlaku di sini: tab monitoring
+    # tidak menyimpan tanggal Screening CV per kandidat, jadi menyaringnya
+    # dengan bulan akan mengosongkan tabel tanpa alasan yang bisa dijelaskan.
+    situs = st.session_state.get("tp_site_f") or []
+    if len(kand) and situs:
+        kand = kand[kand["site"].isin(situs)]
+
+    tgl = lambda v: f"{pd.Timestamp(v):%d %b %Y}" if pd.notna(v) else "—"
+    st.markdown(theme.section_heading(
+        1, theme.esc(r.position_name),
+        f'{theme.esc(r.site)} · {theme.esc(r.divisi)} · {theme.esc(r.level)} · {label}',
+        tag=theme.esc(r.prf_id)), unsafe_allow_html=True)
+
+    kartu = [
+        ("Qty requested", theme.esc(r.qty), "positions asked for", "📄",
+         theme.BRAND["navy"]),
+        ("Candidates", n(len(kand)), "carrying this PRF number", "👥",
+         theme.BRAND["orange"] if len(kand) else theme.NEUTRAL["text_soft"]),
+        ("Type", theme.esc(r.prf_class), "request class", "🏷️",
+         theme.BRAND["navy"]),
+        ("Submitted", tgl(r.tanggal_pengajuan), "PRF submission date", "🗓️",
+         theme.BRAND["navy"]),
+        ("Status", theme.esc(r.status), "PRF status", "📌",
+         theme.STATUS["good"] if str(r.status).upper() == "CLOSE"
+         else theme.STATUS["warn"]),
+    ]
+    for col, (lab, val, subjudul, emo, warna) in zip(
+            st.columns(len(kartu), gap="small"), kartu):
+        with col:
+            st.markdown(theme.kpi_card(lab, val, subjudul, emoji=emo, accent=warna,
+                                       value_size=20), unsafe_allow_html=True)
+
+    st.markdown(theme.section_heading(
+        2, "Candidates for this request",
+        f"{len(kand)} people carry this PRF number in monitoring"),
+        unsafe_allow_html=True)
+
+    if not len(kand):
+        terisi = int(bm["no_prf"].astype(str).str.strip().ne("").sum()) if bm is not None else 0
+        st.markdown(theme.empty_state(
+            "No candidate carries this PRF number yet",
+            "Candidates are matched to a PRF through the <b>No PRF</b> column in "
+            f"the monitoring sheet, and that column is filled on <b>{terisi} of "
+            f"{len(bm) if bm is not None else 0}</b> rows so far. This panel fills "
+            "in by itself as the team enters PRF numbers there — nothing needs "
+            "changing here.", emoji="🔗"), unsafe_allow_html=True)
+        return
+
+    with theme.card("tp_prf_kand", "Candidates", f"{len(kand)} people"):
+        tabel("tp_prf_kand", f"Candidates — {r.prf_id}",
+              f"{r.position_name} · {r.site or '—'}",
+              ["Candidate", "Position", "Level", "Site", "Last progress", "Status"],
+              [[theme.esc(x.candidate), theme.esc(x.position), theme.esc(x.level),
+                theme.esc(x.site),
+                theme.esc(x.last_progress or x.last_progress_1 or "—"),
+                theme.result_pill(x.status)]
+               for x in kand.itertuples()], align="llllll")
+        st.markdown(theme.inline_note(
+            "Read from the <b>monitoring</b> sheet, matched on its <b>No PRF</b> "
+            "column and limited to candidates whose status is OPEN or CLOSE — the "
+            "same rule the PRF Tracking sheet uses for its Candidate column. "
+            "fix_centralized is not consulted here: it has no PRF number at all, "
+            "only the PRF routing dates.", block=True), unsafe_allow_html=True)
+
+
 MODE_POSISI = {
     "By Position": _mode_posisi,
     "By Department": _mode_departemen,
+    "By PRF": _mode_prf,
 }
 
 
 def page_tracking_position():
-    """Dua cara masuk ke data yang sama.
+    """Tiga cara masuk ke data yang sama.
 
-    Per Posisi menjawab "posisi X isinya siapa" dan jadi default karena itu
-    pertanyaan yang paling sering. Per Departemen menjawab "departemen saya sudah
+    By Position menjawab "posisi X isinya siapa" dan jadi default karena itu
+    pertanyaan yang paling sering. By Department menjawab "departemen saya sudah
     sampai mana" — dijawab bertingkat: pilih departemen, lalu buka posisinya satu
     per satu, karena melihat semua posisi sekaligus sebagai tabel bukan tracking,
-    cuma daftar.
+    cuma daftar. By PRF menjawab "permintaan yang saya ajukan sudah dapat siapa",
+    masuk dari nomor PRF-nya (arahan Navi, 13 Sep 2026).
 
-    Keduanya memakai definisi yang sama (metrics._ringkas) dan filter yang sama,
+    Ketiganya memakai definisi yang sama (metrics._ringkas) dan filter yang sama,
     jadi angkanya bisa dibandingkan langsung.
     """
     df, sf, lt = data_or_stop()
@@ -1051,12 +1160,34 @@ def get_prf():
     return M.prepare_prf(DL.load_prf())
 
 
+@st.cache_data(ttl=C.CACHE_TTL_SECONDS, show_spinner="Loading monitoring…")
+def get_monitoring():
+    """Tab monitoring saja — sumber kolom kandidat di PRF Tracking dan By PRF.
+
+    Dipisah dari get_mpp_actual() supaya halaman PRF tidak ikut menunggu MPP2,
+    Existing Employee, dan ADP yang tidak dipakainya sama sekali.
+    """
+    return DL.load_process_monitoring()
+
+
 def page_prf():
     try:
         prf = get_prf()
     except Exception as exc:  # noqa: BLE001
         st.error(f"The PRF data could not be loaded.\n\n{exc}")
         st.stop()
+
+    # Kandidat tiap PRF dibaca dari tab monitoring lewat kolom No PRF — konsep
+    # baru yang dipakai sheet PRF Tracking sejak 13 Sep 2026. Kalau tab-nya
+    # gagal diambil, halaman tetap jalan dengan kolom kandidat kosong: tabel PRF
+    # tanpa kandidat masih berguna, tabel yang hilang sama sekali tidak.
+    try:
+        bm = get_monitoring()
+    except Exception:  # noqa: BLE001
+        bm = None
+    kand_prf = M.prf_candidates(bm) if bm is not None else pd.DataFrame()
+    per_prf = ({k: v for k, v in kand_prf.groupby("no_prf")}
+               if len(kand_prf) else {})
 
     # Pilihan filter diambil dari data untuk site/level/divisi, tapi Tracking dan
     # Status memakai daftar tetap di config: CLOSE dan CANCEL belum pernah ada
@@ -1133,21 +1264,37 @@ def page_prf():
 
         baris = []
         for r in d.sort_values(["site", "level", "position_name"]).itertuples():
+            # Satu PRF bisa punya beberapa kandidat, jadi selnya bertingkat ke
+            # bawah — persis seperti sheet yang menyambungnya dengan CHAR(10).
+            sub = per_prf.get(r.prf_id)
+            if sub is not None and len(sub):
+                nama = "<br>".join(theme.esc(x) for x in sub["candidate"])
+                tahap = "<br>".join(
+                    theme.esc(a or b or "—")
+                    for a, b in zip(sub["last_progress"], sub["last_progress_1"]))
+            else:
+                nama = tahap = f'<span style="color:{theme.NEUTRAL["text_soft"]}">—</span>'
             baris.append([
                 theme.esc(r.prf_id), theme.esc(r.prf_class), n(r.qty),
                 theme.esc(r.position_name), theme.esc(r.site), theme.esc(r.divisi),
                 f"{theme.esc(r.level)} <span style='color:{theme.NEUTRAL['text_soft']}'>"
                 f"· {theme.esc(r.level_type)}</span>",
+                nama, tahap,
                 theme.esc(r.tracking), theme.esc(r.status),
             ])
         tabel("prf_tabel", "PRF Tracking", label_filter,
               ["Request Number", "PRF Class", "Qty", "Position Name", "Site",
-               "Division", "Level", "Tracking PRF", "Status PRF"],
-              baris, align="llrllllll")
+               "Division", "Level", "Candidate", "Last progress",
+               "Tracking PRF", "Status PRF"],
+              baris, align="llrllllllll")
         st.markdown(theme.inline_note(
             "<b>Request Number</b> falls back to the PRF ID when the request number "
             "has not been issued yet — one identity column instead of two "
-            "half-empty ones.",
+            "half-empty ones. <b>Candidate</b> and <b>Last progress</b> come from "
+            "the monitoring sheet, matched on its <b>No PRF</b> column and limited "
+            "to candidates whose status is OPEN or CLOSE — the same rule the "
+            "PRF Tracking sheet uses. A PRF with several candidates stacks them "
+            "down the cell; a dash means no candidate carries that PRF number yet.",
             block=True), unsafe_allow_html=True)
 
 
