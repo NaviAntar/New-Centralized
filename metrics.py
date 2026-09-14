@@ -996,60 +996,248 @@ def position_options(df: pd.DataFrame) -> dict[str, tuple[str, str]]:
 PRF_CANDIDATE_STATUS = ("OPEN", "CLOSE")
 
 
-def prf_candidates(bm: pd.DataFrame, request_number: str | None = None,
+def prf_candidates(bm: pd.DataFrame, onb: pd.DataFrame | None = None,
+                   request_number: str | None = None,
                    statuses=PRF_CANDIDATE_STATUS) -> pd.DataFrame:
-    """Kandidat yang menempel pada sebuah PRF, dibaca dari tab MONITORING.
+    """Kandidat yang menempel pada sebuah PRF, dari DUA sumber sekaligus.
 
-    Menirukan rumus `Candidate1` di sheet PRF Tracking apa adanya::
+    **1. Tab monitoring** (`bm`) — menirukan rumus `Candidate1` di sheet PRF
+    Tracking apa adanya::
 
         TEXTJOIN(CHAR(10); TRUE;
           FILTER('Backend Monitoring'!B:B & " (" & 'Backend Monitoring'!L:L & ")";
                  'Backend Monitoring'!N:N = <request_number>;
                  ('Backend Monitoring'!K:K="Open") + (…="Close")))
 
-    B = Nama, L = LAST PROGRESS 1, K = STATUS, N = No PRF.
+    B = Nama, L = LAST PROGRESS 1, K = STATUS, N = No PRF. Hanya baris berstatus
+    **OPEN atau CLOSE** yang diambil; FAILED dan HOLD tidak mengisi apa pun.
 
-    Kuncinya **No PRF**, bukan pasangan (posisi, site) yang dipakai mode By
-    Position (arahan Navi, 13 Sep 2026: "khusus untuk bagian tracking by prf
-    sesuaikan dengan link monitoring saja jangan yang fix centralized").
-    Bedanya nyata: satu nomor PRF menunjuk satu permintaan, sedangkan pasangan
-    posisi+site menyatukan semua PRF untuk posisi yang sama.
+    **2. Sheet8** (`onb`) — daftar onboarding dari HRIS, disambung lewat kolom
+    `Request No`. Di sini **semua baris dipakai**, tidak disaring status, dan
+    tahapnya selalu ditulis **"Onboarding"**: orangnya sudah masuk kerja, tidak
+    ada tahap setelah itu (arahan Navi, 13 Sep 2026).
 
-    `request_number` kosong berarti seluruh baris yang punya No PRF — dipakai
-    untuk menghitung jumlah kandidat per PRF sekaligus di halaman PRF Tracking.
+    Orang yang muncul di kedua sumber ditulis SEKALI, memakai baris HRIS —
+    HRIS yang memastikan orangnya benar-benar masuk, sedangkan monitoring bisa
+    tertinggal di tahap sebelumnya.
+
+    `request_number` kosong berarti seluruh baris yang punya nomor PRF — dipakai
+    menghitung jumlah kandidat per PRF sekaligus.
     """
-    kolom = ["no_prf", "candidate", "last_progress", "last_progress_1",
-             "position", "site", "level", "status"]
-    if bm is None or getattr(bm, "empty", True) or "no_prf" not in bm.columns:
-        return pd.DataFrame(columns=kolom)
+    kolom = ["no_prf", "candidate", "last_progress", "position", "site",
+             "level", "status", "sumber"]
 
-    d = bm.copy()
-    d["no_prf"] = d["no_prf"].astype(str).str.strip()
-    d = d[d["no_prf"].ne("") & ~d["no_prf"].str.lower().isin(["nan", "none"])]
-    if statuses:
-        mau = {str(x).strip().upper() for x in statuses}
-        d = d[d["status"].astype(str).str.strip().str.upper().isin(mau)]
+    def _monitoring() -> pd.DataFrame:
+        if bm is None or getattr(bm, "empty", True) or "no_prf" not in bm.columns:
+            return pd.DataFrame(columns=kolom)
+        d = bm.copy()
+        d["no_prf"] = d["no_prf"].astype(str).str.strip()
+        d = d[d["no_prf"].ne("") & ~d["no_prf"].str.lower().isin(["nan", "none"])]
+        if statuses:
+            mau = {str(x).strip().upper() for x in statuses}
+            d = d[d["status"].astype(str).str.strip().str.upper().isin(mau)]
+        if d.empty:
+            return pd.DataFrame(columns=kolom)
+        out = pd.DataFrame({
+            "no_prf": d["no_prf"],
+            "candidate": d.get("candidate", "").astype(str).str.strip(),
+            # LAST PROGRESS yang dipakai; LAST PROGRESS 1 hanya penambal, karena
+            # di data nyata kolom itu hampir selalu kosong.
+            "last_progress": (d.get("last_progress", "").astype(str).str.strip()
+                              .replace("", pd.NA)
+                              .fillna(d.get("last_progress_1", "")
+                                      .astype(str).str.strip())),
+            "position": d.get("position", "").astype(str).str.strip(),
+            "site": d.get("site", "").astype(str).str.strip(),
+            "level": d.get("level", "").astype(str).str.strip(),
+            "status": d.get("status", "").astype(str).str.strip(),
+        })
+        out["sumber"] = "Monitoring"
+        return out
+
+    def _hris() -> pd.DataFrame:
+        if onb is None or getattr(onb, "empty", True):
+            return pd.DataFrame(columns=kolom)
+        d = onb.copy()
+        d["no_prf"] = d["no_prf"].astype(str).str.strip()
+        d = d[d["no_prf"].ne("")]
+        if d.empty:
+            return pd.DataFrame(columns=kolom)
+        out = pd.DataFrame({
+            "no_prf": d["no_prf"],
+            "candidate": d["candidate"].astype(str).str.strip(),
+            "last_progress": "Onboarding",
+            "position": d.get("position", "").astype(str).str.strip(),
+            "site": d.get("site", "").astype(str).str.strip(),
+            "level": "",
+            "status": d.get("status", "").astype(str).str.strip(),
+        })
+        out["sumber"] = "HRIS onboarding"
+        return out
+
+    gabung = pd.concat([_hris(), _monitoring()], ignore_index=True)
+    if gabung.empty:
+        return pd.DataFrame(columns=kolom)
+    gabung = gabung[gabung["candidate"].astype(str).str.strip().ne("")]
     if request_number:
-        d = d[d["no_prf"] == str(request_number).strip()]
-    if d.empty:
+        gabung = gabung[gabung["no_prf"] == str(request_number).strip()]
+    if gabung.empty:
         return pd.DataFrame(columns=kolom)
 
-    for k in kolom:
-        if k not in d.columns:
-            d[k] = ""
-    return (d[kolom].astype({"candidate": str})
-            .sort_values(["no_prf", "candidate"]).reset_index(drop=True))
+    # HRIS didahulukan di concat, jadi keep="first" menyisakan baris HRIS ketika
+    # orang yang sama muncul di kedua sumber untuk PRF yang sama.
+    kunci = gabung["candidate"].str.lower().str.replace(r"[^a-z0-9]+", " ", regex=True).str.strip()
+    gabung = gabung[~pd.Series(list(zip(gabung["no_prf"], kunci)),
+                               index=gabung.index).duplicated(keep="first")]
+    return (gabung[kolom].sort_values(["no_prf", "candidate"])
+            .reset_index(drop=True))
 
 
-def prf_candidate_counts(bm: pd.DataFrame) -> pd.Series:
+def prf_candidate_counts(bm: pd.DataFrame,
+                         onb: pd.DataFrame | None = None) -> pd.Series:
     """Berapa kandidat menempel pada tiap nomor PRF — index = No PRF."""
-    d = prf_candidates(bm)
+    d = prf_candidates(bm, onb)
     if d.empty:
         return pd.Series(dtype=int)
     return d.groupby("no_prf")["candidate"].nunique()
 
 
-def prf_options(prf: pd.DataFrame, bm: pd.DataFrame | None = None) -> dict:
+# Sebutan level di sheet PRF vs sebutan level di MPP2 / daftar karyawan. Dua
+# tempat menulis hal yang sama dengan kata yang berbeda, jadi dipetakan sekali
+# di sini alih-alih ditebak di tiap pemakaian.
+PRF_LEVEL_ALIAS = {
+    "JUNIOR STAFF": "Jr. Staff / Foreman",
+    "JR. STAFF": "Jr. Staff / Foreman",
+    "FOREMAN": "Jr. Staff / Foreman",
+    "NON STAFF": "Non Staff",
+    "SUPERVISOR": "Supervisor",
+    "SUPERINTENDENT": "Superintendent",
+    "MANAGER": "Manager",
+    "GENERAL MANAGER": "General Manager",
+}
+
+
+def prf_level_name(nilai) -> str:
+    """Sebutan level PRF -> sebutan level yang dipakai MPP2 dan daftar karyawan."""
+    teks = str(nilai or "").strip().upper()
+    return PRF_LEVEL_ALIAS.get(teks, str(nilai or "").strip())
+
+
+def prf_mpp_actual(prf: pd.DataFrame, ref: pd.DataFrame,
+                   hc: pd.DataFrame) -> pd.DataFrame:
+    """Tempelkan MPP, Actual, dan Gap ke tiap baris PRF.
+
+    Dihitung per **divisi + level + site**, cara yang sama dengan Summary by
+    Division (keputusan Navi, 14 Sep 2026) — bukan per posisi. Akibatnya dua PRF
+    di divisi, level, dan site yang sama menunjukkan MPP dan Actual yang sama:
+    angkanya memang menggambarkan blok itu, bukan satu posisi.
+
+    Gap memakai tanda yang sama dengan Summary by Division: **Actual − MPP**,
+    minus berarti kurang orang.
+    """
+    kosong = pd.DataFrame({"mpp": 0, "actual": 0, "gap": 0}, index=prf.index)
+    if prf is None or prf.empty:
+        return kosong
+
+    kunci = lambda d, lv: (d["divisi"].astype(str).map(C.merge_division).astype(str)
+                           + "|" + lv.astype(str) + "|"
+                           + d["site"].astype(str).str.upper())
+
+    k_prf = kunci(prf, prf["level"].map(prf_level_name))
+    hasil = kosong.copy()
+
+    if ref is not None and len(ref):
+        lv = ref["level_code"].map(C.level_name).astype(str)
+        m = ref.groupby(kunci(ref, lv))["mpp"].sum()
+        hasil["mpp"] = k_prf.map(m).fillna(0).astype(int).values
+    if hc is not None and len(hc):
+        lv = hc["level_code"].map(C.level_name).astype(str)
+        a = hc.groupby(kunci(hc, lv)).size()
+        hasil["actual"] = k_prf.map(a).fillna(0).astype(int).values
+    hasil["gap"] = hasil["actual"] - hasil["mpp"]
+    return hasil
+
+
+def prf_open_candidates(prf: pd.DataFrame, bm: pd.DataFrame | None,
+                        onb: pd.DataFrame | None, df: pd.DataFrame,
+                        lt: pd.DataFrame, sf: pd.DataFrame | None = None,
+                        estimasi: pd.Series | None = None) -> dict:
+    """Kandidat yang MASIH BERJALAN untuk tiap PRF -> {prf_id: DataFrame}.
+
+    Menggabungkan dua jalur penyambungan sekaligus (keputusan Navi, 14 Sep 2026),
+    karena masing-masing sendirian tidak cukup:
+
+    1. **Lewat nomor PRF** — kolom `No PRF` di monitoring dan `Request No` di
+       Sheet8. Tepat per permintaan, tapi kolomnya baru mulai diisi.
+    2. **Lewat posisi + site** — kandidat di fix_centralized yang melamar posisi
+       yang diminta PRF itu, di site yang sama. Inilah yang untuk sekarang
+       mengisi hampir seluruh tabel.
+
+    Keduanya disaring ke **status OPEN saja**: yang ditanya baris PRF adalah
+    "permintaan ini sedang diproses siapa", dan orang yang sudah onboarding
+    terhitung di kolom Actual, bukan di sini.
+
+    Kolomnya gabungan dari dua tabel yang sudah ada — Candidate Tracking By
+    Position membawa SLA dan Estimate Onboarding, By PRF membawa Position.
+    """
+    kolom = ["candidate", "position", "level", "site", "last_progress",
+             "total_lt", "budget_total", "estimasi", "status1"]
+    if prf is None or prf.empty:
+        return {}
+
+    buka = df[df["status1"] == "OPEN"] if df is not None and len(df) else df
+    # Jalur 2 dihitung sekali per pasangan posisi+site yang benar-benar dipakai,
+    # bukan sekali per baris PRF: 502 PRF hanya menyentuh sedikit pasangan.
+    pasangan = {(r.position_name, r.site) for r in prf.itertuples()}
+    per_pasangan = {}
+    if buka is not None and len(buka):
+        for pos, loc in pasangan:
+            d = position_candidates(buka, lt, pos, loc, sf=sf, estimasi=estimasi)
+            if len(d):
+                per_pasangan[(pos, loc)] = d.rename(columns={
+                    "candidate_id": "candidate", "position_name": "position",
+                    "loc": "site"})
+
+    # Jalur 1, disaring ke OPEN.
+    lewat_nomor = prf_candidates(bm, onb)
+    if len(lewat_nomor):
+        lewat_nomor = lewat_nomor[
+            lewat_nomor["status"].astype(str).str.strip().str.upper() == "OPEN"]
+    per_nomor = ({k: v for k, v in lewat_nomor.groupby("no_prf")}
+                 if len(lewat_nomor) else {})
+
+    hasil = {}
+    for r in prf.itertuples():
+        bagian = []
+        d2 = per_pasangan.get((r.position_name, r.site))
+        if d2 is not None and len(d2):
+            b = d2.copy()
+            for k in kolom:
+                if k not in b.columns:
+                    b[k] = pd.NA
+            bagian.append(b[kolom])
+        d1 = per_nomor.get(r.prf_id)
+        if d1 is not None and len(d1):
+            b = pd.DataFrame({
+                "candidate": d1["candidate"], "position": d1["position"],
+                "level": d1["level"], "site": d1["site"],
+                "last_progress": d1["last_progress"], "total_lt": pd.NA,
+                "budget_total": pd.NA, "estimasi": pd.NA, "status1": "OPEN"})
+            bagian.append(b)
+        if not bagian:
+            continue
+        gab = pd.concat(bagian, ignore_index=True)
+        # Baris dari fix_centralized didahulukan karena membawa SLA dan
+        # Estimate Onboarding; baris nomor PRF hanya menambah yang belum ada.
+        kunci = (gab["candidate"].astype(str).str.lower()
+                 .str.replace(r"[^a-z0-9]+", " ", regex=True).str.strip())
+        gab = gab[~kunci.duplicated(keep="first")]
+        hasil[r.prf_id] = gab.reset_index(drop=True)
+    return hasil
+
+
+def prf_options(prf: pd.DataFrame, bm: pd.DataFrame | None = None,
+                onb: pd.DataFrame | None = None) -> dict:
     """Label pencarian -> baris PRF, untuk kotak Tracking Posisi mode By PRF.
 
     Jumlah kandidat di labelnya dihitung dari tab MONITORING lewat kolom
@@ -1062,7 +1250,8 @@ def prf_options(prf: pd.DataFrame, bm: pd.DataFrame | None = None) -> dict:
     if d.empty:
         return {}
 
-    jumlah = prf_candidate_counts(bm) if bm is not None else pd.Series(dtype=int)
+    jumlah = (prf_candidate_counts(bm, onb)
+              if (bm is not None or onb is not None) else pd.Series(dtype=int))
     d = d.sort_values(["tanggal_pengajuan", "prf_id"], ascending=[False, True])
     hasil = {}
     for r in d.itertuples():
